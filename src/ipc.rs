@@ -140,9 +140,17 @@ pub fn handle(body: &str, cfg: &Config, emit: impl Fn(Out) + Send + 'static) {
         "getConfig" => respond(m.id, true, cfg.lock().unwrap().clone()),
         "setConfig" => {
             if let Some(key) = m.key {
-                let mut c = cfg.lock().unwrap();
-                c[key] = m.value.unwrap_or(Value::Null);
-                config::save(&c);
+                let parallel = (key == "downloadParallel").then(|| m.value.as_ref().and_then(Value::as_u64)).flatten();
+                {
+                    let mut c = cfg.lock().unwrap();
+                    c[key] = m.value.unwrap_or(Value::Null);
+                    config::save(&c);
+                }
+                // More simultaneous downloads allowed: start waiting ones right away.
+                if let Some(n) = parallel {
+                    crate::download::set_limit(n as usize);
+                    crate::download::pump(&shared_emit(&emit));
+                }
             }
             respond(m.id, true, Value::Null);
         }
@@ -254,7 +262,7 @@ pub fn handle(body: &str, cfg: &Config, emit: impl Fn(Out) + Send + 'static) {
             video_id: m.video_id.unwrap_or_default(),
         }),
         "showWindow" => (emit.lock().unwrap())(Out::Tray(TrayAction::Show)),
-        "cancelDownload" => crate::download::cancel(),
+        "cancelDownload" => crate::download::cancel(m.qid), // no id: all of them
         "installYtdlp" => crate::download::install_ytdlp_task(shared_emit(&emit)),
         "updateYtdlp" => crate::download::update_ytdlp_task(shared_emit(&emit)),
         "installFfmpeg" => crate::download::install_ffmpeg_task(shared_emit(&emit)),

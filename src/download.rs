@@ -19,7 +19,7 @@ use std::{
     path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::{
-        atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering},
         Arc, Mutex,
     },
     time::{Duration, Instant, UNIX_EPOCH},
@@ -35,15 +35,26 @@ const MEDIA_EXT: &[&str] = &[
 ];
 
 static TOOL_BUSY: AtomicBool = AtomicBool::new(false);
-static CANCELLED: AtomicBool = AtomicBool::new(false);
-static PID: AtomicU32 = AtomicU32::new(0);
-/// True while the queue worker thread is running (a download is in progress).
-static WORKER: AtomicBool = AtomicBool::new(false);
-/// The app is quitting: the interrupted download stays in the saved queue to resume next time.
+/// The app is quitting: interrupted downloads stay in the saved queue to resume next time.
 static SHUTDOWN: AtomicBool = AtomicBool::new(false);
-static QUEUE: Mutex<VecDeque<QueueItem>> = Mutex::new(VecDeque::new());
-static ACTIVE: Mutex<Option<QueueItem>> = Mutex::new(None);
 static NEXT_QID: AtomicU64 = AtomicU64::new(1);
+/// How many downloads may run at the same time (Ajustes -> Opciones de descarga).
+static LIMIT: AtomicUsize = AtomicUsize::new(2);
+pub const MAX_PARALLEL: usize = 4;
+/// Two downloads that both need yt-dlp must not both install it.
+static INSTALL_LOCK: Mutex<()> = Mutex::new(());
+
+/// A download in progress: its queue item plus what is needed to stop it.
+struct Active {
+    item: QueueItem,
+    pid: Arc<AtomicU32>,
+    cancelled: Arc<AtomicBool>,
+}
+struct State {
+    queue: VecDeque<QueueItem>,
+    active: Vec<Active>,
+}
+static STATE: Mutex<State> = Mutex::new(State { queue: VecDeque::new(), active: Vec::new() });
 
 pub type Emit = Arc<dyn Fn(Out) + Send + Sync>;
 
@@ -92,6 +103,28 @@ fn find_ffmpeg() -> (bool, Option<PathBuf>) {
 pub(crate) fn send_raw(emit: &Emit, func: &str, ev: Value) {
     emit(Out::Eval(format!("window.pctube&&window.pctube.{func}&&window.pctube.{func}({ev})")));
 }
+/// Everything one running download needs: where to report (tagged with its queue id) and how to
+/// stop it. Cloned into the helper threads of that download.
+#[derive(Clone)]
+struct Ctx {
+    emit: Emit,
+    qid: u64,
+    pid: Arc<AtomicU32>,
+    cancelled: Arc<AtomicBool>,
+}
+impl Ctx {
+    fn send(&self, mut ev: Value) {
+        ev["qid"] = json!(self.qid);
+        send(&self.emit, ev);
+    }
+    fn status(&self, msg: &str) {
+        self.send(json!({ "kind": "status", "msg": msg }));
+    }
+    fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::SeqCst)
+    }
+}
+
 pub(crate) fn send(emit: &Emit, ev: Value) {
     emit(Out::Eval(format!(
         "window.pctube&&window.pctube._download&&window.pctube._download({ev})"
@@ -353,7 +386,7 @@ pub fn info() -> Value {
             "source": if !ff_ok { Value::Null } else if ff_dir.is_some() { json!("app") } else { json!("system") },
         },
         "files": files,
-        "busy": WORKER.load(Ordering::SeqCst),
+        "busy": active_count() > 0,
         "queue": queue_snapshot(),
     })
 }
@@ -377,7 +410,7 @@ pub fn auto_update_in_background() {
             .ok()
             .and_then(|t| t.elapsed().ok())
             .is_some_and(|age| age < week);
-        if fresh || WORKER.load(Ordering::SeqCst) {
+        if fresh || active_count() > 0 {
             return;
         }
         let ok = Command::new(&exe)
@@ -593,11 +626,11 @@ fn build_args(video_id: &str, o: &Opts, ffmpeg: (bool, Option<PathBuf>)) -> Vec<
 
 /// Reports progress of a conversion step from the size of the file ffmpeg is writing (yt-dlp
 /// does not forward ffmpeg's progress). `expected` unknown => indeterminate bar.
-fn spawn_size_watch(label: &'static str, paths: Vec<PathBuf>, expected: Option<u64>, emit: Emit) -> Arc<AtomicBool> {
+fn spawn_size_watch(label: &'static str, paths: Vec<PathBuf>, expected: Option<u64>, ctx: Ctx) -> Arc<AtomicBool> {
     let stop = Arc::new(AtomicBool::new(false));
     let flag = stop.clone();
     std::thread::spawn(move || {
-        let phase = |pct: Option<i32>| send(&emit, json!({ "kind": "phase", "label": label, "pct": pct }));
+        let phase = |pct: Option<i32>| ctx.send(json!({ "kind": "phase", "label": label, "pct": pct }));
         let Some(expected) = expected.filter(|e| *e > 0) else {
             phase(None);
             return;
@@ -640,7 +673,7 @@ fn streams_size(final_path: &Path) -> u64 {
 }
 
 /// Runs yt-dlp and streams progress. Ok(Some(path)) on success.
-fn run(exe: &Path, args: &[String], o: &Opts, has_ffmpeg: bool, emit: &Emit) -> Result<Option<String>, String> {
+fn run(exe: &Path, args: &[String], o: &Opts, has_ffmpeg: bool, ctx: &Ctx) -> Result<Option<String>, String> {
     let mut child = Command::new(exe)
         .args(args)
         .stdin(Stdio::null())
@@ -649,7 +682,7 @@ fn run(exe: &Path, args: &[String], o: &Opts, has_ffmpeg: bool, emit: &Emit) -> 
         .creation_flags(CREATE_NO_WINDOW)
         .spawn()
         .map_err(|e| format!("no se pudo ejecutar yt-dlp: {e}"))?;
-    PID.store(child.id(), Ordering::SeqCst);
+    ctx.pid.store(child.id(), Ordering::SeqCst);
 
     let errs: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
     let err_thread = child.stderr.take().map(|s| {
@@ -678,7 +711,7 @@ fn run(exe: &Path, args: &[String], o: &Opts, has_ffmpeg: bool, emit: &Emit) -> 
                 if let Ok(v) = p.trim().trim_end_matches('%').trim().parse::<f32>() {
                     if v as i32 != last_pct {
                         last_pct = v as i32;
-                        send(emit, json!({ "kind": "progress", "pct": last_pct }));
+                        ctx.send(json!({ "kind": "progress", "pct": last_pct }));
                     }
                 }
             } else if let Some(it) = line.strip_prefix("PCTUBE_ITEM ") {
@@ -688,10 +721,10 @@ fn run(exe: &Path, args: &[String], o: &Opts, has_ffmpeg: bool, emit: &Emit) -> 
                     stop_watch(&mut watch);
                     streams = 0;
                     last_pct = -1;
-                    send(emit, json!({ "kind": "item", "index": i, "total": total }));
+                    ctx.send(json!({ "kind": "item", "index": i, "total": total }));
                 }
             } else if let Some(t) = line.strip_prefix("PCTUBE_TITLE ") {
-                send(emit, json!({ "kind": "title", "title": t.trim() }));
+                ctx.send(json!({ "kind": "title", "title": t.trim() }));
             } else if let Some(f) = line.strip_prefix("PCTUBE_DONE ") {
                 stop_watch(&mut watch);
                 file = Some(f.trim().to_string());
@@ -705,7 +738,7 @@ fn run(exe: &Path, args: &[String], o: &Opts, has_ffmpeg: bool, emit: &Emit) -> 
                     (_, true, _) => "Descargando audio",
                     _ => "Descargando",
                 };
-                send(emit, json!({ "kind": "phase", "label": label, "pct": 0 }));
+                ctx.send(json!({ "kind": "phase", "label": label, "pct": 0 }));
             } else if let Some(rest) = line.strip_prefix("[Merger] Merging formats into ") {
                 stop_watch(&mut watch);
                 let final_path = PathBuf::from(rest.trim().trim_matches('"'));
@@ -714,29 +747,29 @@ fn run(exe: &Path, args: &[String], o: &Opts, has_ffmpeg: bool, emit: &Emit) -> 
                 // ffmpeg writes "<stem>.temp.<ext>" and renames it when done.
                 let temp = final_path.with_file_name(format!("{stem}.temp.{ext}"));
                 let expected = streams_size(&final_path);
-                watch = Some(spawn_size_watch("Uniendo vídeo y audio", vec![final_path, temp], Some(expected), emit.clone()));
+                watch = Some(spawn_size_watch("Uniendo vídeo y audio", vec![final_path, temp], Some(expected), ctx.clone()));
             } else if let Some(rest) = line.strip_prefix("[ExtractAudio] Destination: ") {
                 stop_watch(&mut watch);
                 let dest = PathBuf::from(rest.trim());
                 let expected = o.cbr_kbps().map(|k| (o.duration * k as f64 * 125.0) as u64);
-                watch = Some(spawn_size_watch("Convirtiendo audio", vec![dest], expected, emit.clone()));
+                watch = Some(spawn_size_watch("Convirtiendo audio", vec![dest], expected, ctx.clone()));
             } else if line.starts_with("[ModifyChapters]") {
                 stop_watch(&mut watch);
-                watch = Some(spawn_size_watch("Quitando patrocinios", vec![], None, emit.clone()));
+                watch = Some(spawn_size_watch("Quitando patrocinios", vec![], None, ctx.clone()));
             } else if line.starts_with("[VideoRemuxer]") || line.starts_with("[VideoConvertor]") {
                 stop_watch(&mut watch);
-                watch = Some(spawn_size_watch("Convirtiendo vídeo", vec![], None, emit.clone()));
+                watch = Some(spawn_size_watch("Convirtiendo vídeo", vec![], None, ctx.clone()));
             }
         }
     }
     let status = child.wait().map_err(|e| e.to_string())?;
-    PID.store(0, Ordering::SeqCst);
+    ctx.pid.store(0, Ordering::SeqCst);
     stop_watch(&mut watch);
     if let Some(t) = err_thread {
         let _ = t.join();
     }
     // In a playlist some entries may fail (private, removed): that is fine if others came through.
-    if status.success() || (!o.playlist_id.is_empty() && file.is_some() && !CANCELLED.load(Ordering::SeqCst)) {
+    if status.success() || (!o.playlist_id.is_empty() && file.is_some() && !ctx.is_cancelled()) {
         Ok(file)
     } else {
         let errs = errs.lock().unwrap();
@@ -752,6 +785,11 @@ fn run(exe: &Path, args: &[String], o: &Opts, has_ffmpeg: bool, emit: &Emit) -> 
 }
 
 fn ensure_ytdlp(emit: &Emit) -> Result<PathBuf, String> {
+    if let Some(p) = find_ytdlp() {
+        return Ok(p);
+    }
+    // Several downloads may start together: only the first one installs it.
+    let _guard = INSTALL_LOCK.lock().unwrap();
     match find_ytdlp() {
         Some(p) => Ok(p),
         None => {
@@ -771,27 +809,43 @@ fn update_ytdlp_quiet(exe: &Path) {
         .status();
 }
 
-fn job(video_id: &str, o: &Opts, emit: &Emit) -> Result<Option<String>, String> {
-    let exe = ensure_ytdlp(emit)?;
+/// Tests replace the real work (yt-dlp) with a stand-in.
+#[cfg(test)]
+static JOB_HOOK: Mutex<Option<fn(&Ctx) -> Result<Option<String>, String>>> = Mutex::new(None);
+
+fn job(video_id: &str, o: &Opts, ctx: &Ctx) -> Result<Option<String>, String> {
+    #[cfg(test)]
+    {
+        let hook = *JOB_HOOK.lock().unwrap(); // copy it out: the lock must not be held while it runs
+        if let Some(hook) = hook {
+            return hook(ctx);
+        }
+    }
+    let exe = ensure_ytdlp(&ctx.emit)?;
+    if ctx.is_cancelled() {
+        return Err("cancelada".into());
+    }
     let ffmpeg = find_ffmpeg();
     let has_ffmpeg = ffmpeg.0;
     if !has_ffmpeg && o.mode != "audio" {
-        status(emit, "Sin ffmpeg: calidad limitada (instálalo en Ajustes → Descargas)");
+        ctx.status("Sin ffmpeg: calidad limitada (instálalo en Ajustes → Descargas)");
     } else {
-        status(emit, "Iniciando descarga…");
+        ctx.status("Iniciando descarga…");
     }
     let args = build_args(video_id, o, ffmpeg);
-    match run(&exe, &args, o, has_ffmpeg, emit) {
+    match run(&exe, &args, o, has_ffmpeg, ctx) {
         Ok(f) => Ok(f),
-        Err(_) if CANCELLED.load(Ordering::SeqCst) => Err("cancelada".into()),
+        Err(_) if ctx.is_cancelled() => Err("cancelada".into()),
         // Test sessions never update the tool (they only probe the queue with made-up ids).
         Err(first) if config::debug_session() => Err(first),
+        // yt-dlp.exe can't be replaced while another download is using it.
+        Err(first) if active_count() > 1 => Err(first),
         Err(first) => {
             // YouTube changes break yt-dlp regularly: update it and retry once.
-            status(emit, "Actualizando yt-dlp y reintentando…");
+            ctx.status("Actualizando yt-dlp y reintentando…");
             update_ytdlp_quiet(&exe);
-            run(&exe, &args, o, has_ffmpeg, emit).map_err(|second| {
-                if CANCELLED.load(Ordering::SeqCst) {
+            run(&exe, &args, o, has_ffmpeg, ctx).map_err(|second| {
+                if ctx.is_cancelled() {
                     "cancelada".into()
                 } else if second == first {
                     second
@@ -819,14 +873,16 @@ fn queue_path() -> PathBuf {
     config::data_dir().join(if config::debug_session() { "queue-debug.json" } else { "queue.json" })
 }
 
-/// Active download first, then the waiting ones.
+/// Running downloads first, then the waiting ones.
 fn all_items() -> Vec<QueueItem> {
-    let mut v: Vec<QueueItem> = ACTIVE.lock().unwrap().iter().cloned().collect();
-    v.extend(QUEUE.lock().unwrap().iter().cloned());
-    v
+    let st = STATE.lock().unwrap();
+    st.active.iter().map(|a| a.item.clone()).chain(st.queue.iter().cloned()).collect()
 }
 
 fn persist_queue() {
+    if cfg!(test) {
+        return; // tests must never touch the real saved queue
+    }
     let items = all_items();
     if items.is_empty() {
         let _ = std::fs::remove_file(queue_path());
@@ -835,18 +891,29 @@ fn persist_queue() {
     }
 }
 
+pub fn active_count() -> usize {
+    STATE.lock().unwrap().active.len()
+}
+
+/// Sets how many downloads run together (1..=MAX_PARALLEL). Call `pump` afterwards to use a
+/// higher limit right away.
+pub fn set_limit(n: usize) {
+    LIMIT.store(n.clamp(1, MAX_PARALLEL), Ordering::SeqCst);
+}
+
 /// Waiting items as JSON for the page: [{qid, videoId, label, opts}].
 pub fn queue_snapshot() -> Value {
-    let waiting: Vec<Value> = QUEUE
-        .lock()
-        .unwrap()
+    let st = STATE.lock().unwrap();
+    let waiting: Vec<Value> = st
+        .queue
         .iter()
         .map(|i| json!({ "qid": i.qid, "videoId": i.video_id, "label": i.label, "opts": i.opts }))
         .collect();
     json!({
         "items": waiting,
-        "running": WORKER.load(Ordering::SeqCst),
-        "active": ACTIVE.lock().unwrap().as_ref().map(|i| i.qid),
+        "running": !st.active.is_empty(),
+        "active": st.active.iter().map(|a| a.item.qid).collect::<Vec<_>>(),
+        "limit": LIMIT.load(Ordering::SeqCst),
     })
 }
 
@@ -857,9 +924,12 @@ fn send_queue(emit: &Emit) {
 /// Loads what was left in the queue last time. Nothing starts by itself: the page shows it and
 /// "Reanudar" (or the next download) starts it.
 pub fn restore_queue() {
+    if cfg!(test) {
+        return;
+    }
     let Ok(text) = std::fs::read_to_string(queue_path()) else { return };
     let Ok(items) = serde_json::from_str::<Vec<QueueItem>>(&text) else { return };
-    let mut q = QUEUE.lock().unwrap();
+    let mut st = STATE.lock().unwrap();
     for mut i in items {
         if !valid_video_id(&i.video_id) {
             continue;
@@ -867,11 +937,11 @@ pub fn restore_queue() {
         i.opts = i.opts.sanitized();
         i.label.truncate(200);
         NEXT_QID.fetch_max(i.qid + 1, Ordering::SeqCst);
-        q.push_back(i);
+        st.queue.push_back(i);
     }
 }
 
-/// Queues a download and starts the worker if it is idle. `qid` is chosen by the page so that
+/// Queues a download and starts as many as the limit allows. `qid` is chosen by the page so that
 /// it can follow the item (0 = pick one).
 pub fn enqueue(video_id: String, opts: Opts, label: String, qid: u64, emit: Emit) {
     if !valid_video_id(&video_id) {
@@ -881,96 +951,114 @@ pub fn enqueue(video_id: String, opts: Opts, label: String, qid: u64, emit: Emit
     let qid = if qid == 0 { NEXT_QID.fetch_add(1, Ordering::SeqCst) } else { qid };
     NEXT_QID.fetch_max(qid + 1, Ordering::SeqCst);
     let label: String = label.chars().filter(|c| !c.is_control()).take(200).collect();
-    QUEUE.lock().unwrap().push_back(QueueItem { qid, video_id, label, opts: opts.sanitized() });
-    persist_queue();
-    send_queue(&emit);
-    ensure_worker(emit);
+    let item = QueueItem { qid, video_id, label, opts: opts.sanitized() };
+    {
+        let mut st = STATE.lock().unwrap();
+        // The same thing twice would write the same files at once.
+        let dup = st.queue.iter().chain(st.active.iter().map(|a| &a.item)).any(|i| {
+            i.video_id == item.video_id && i.opts.playlist_id == item.opts.playlist_id && i.opts.mode == item.opts.mode
+        });
+        if dup {
+            drop(st);
+            status(&emit, "Ya está en la cola");
+            return;
+        }
+        st.queue.push_back(item);
+    }
+    pump(&emit);
 }
 
-/// Starts the worker unless it is already running.
-pub fn ensure_worker(emit: Emit) {
-    if WORKER.swap(true, Ordering::SeqCst) {
+/// Starts waiting downloads while there is room under the limit. Each runs on its own thread and
+/// calls this again when it ends, so the queue drains by itself.
+pub fn pump(emit: &Emit) {
+    if SHUTDOWN.load(Ordering::SeqCst) {
         return;
     }
-    std::thread::spawn(move || {
-        loop {
-            // Decide "empty" and clear WORKER under the queue lock, so an item pushed right now
-            // is either seen here or finds WORKER false and starts a new worker.
-            let item = {
-                let mut q = QUEUE.lock().unwrap();
-                match q.pop_front() {
-                    Some(i) => i,
-                    None => {
-                        WORKER.store(false, Ordering::SeqCst);
-                        break;
-                    }
-                }
-            };
-            *ACTIVE.lock().unwrap() = Some(item.clone());
-            CANCELLED.store(false, Ordering::SeqCst);
-            send(&emit, json!({ "kind": "start", "qid": item.qid, "label": item.label, "videoId": item.video_id, "opts": item.opts }));
-            send_queue(&emit);
-            let result = job(&item.video_id, &item.opts, &emit);
+    loop {
+        let started = {
+            let mut st = STATE.lock().unwrap();
+            if st.active.len() >= LIMIT.load(Ordering::SeqCst) {
+                None
+            } else if let Some(item) = st.queue.pop_front() {
+                let pid = Arc::new(AtomicU32::new(0));
+                let cancelled = Arc::new(AtomicBool::new(false));
+                st.active.push(Active { item: item.clone(), pid: pid.clone(), cancelled: cancelled.clone() });
+                Some((item, pid, cancelled))
+            } else {
+                None
+            }
+        };
+        let Some((item, pid, cancelled)) = started else { break };
+        let ctx = Ctx { emit: emit.clone(), qid: item.qid, pid, cancelled };
+        ctx.send(json!({ "kind": "start", "label": item.label, "videoId": item.video_id, "opts": item.opts }));
+        let emit = emit.clone();
+        std::thread::spawn(move || {
+            let result = job(&item.video_id, &item.opts, &ctx);
             if SHUTDOWN.load(Ordering::SeqCst) {
                 return; // quitting: leave it saved to resume next time
             }
             match result {
-                Ok(file) => send(&emit, json!({ "kind": "done", "qid": item.qid, "file": file })),
-                Err(e) if e == "cancelada" => send(&emit, json!({ "kind": "cancelled", "qid": item.qid })),
-                Err(e) => send(&emit, json!({ "kind": "error", "qid": item.qid, "msg": e })),
+                Ok(file) => ctx.send(json!({ "kind": "done", "file": file })),
+                Err(e) if e == "cancelada" => ctx.send(json!({ "kind": "cancelled" })),
+                Err(e) => ctx.send(json!({ "kind": "error", "msg": e })),
             }
-            *ACTIVE.lock().unwrap() = None;
-            persist_queue();
-            send_queue(&emit);
-        }
-        persist_queue();
-        send_queue(&emit);
-    });
+            STATE.lock().unwrap().active.retain(|a| a.item.qid != item.qid);
+            pump(&emit);
+        });
+    }
+    persist_queue();
+    send_queue(emit);
 }
 
 /// Starts the saved queue ("Reanudar").
 pub fn resume(emit: Emit) {
-    if QUEUE.lock().unwrap().is_empty() {
-        send_queue(&emit);
-    } else {
-        ensure_worker(emit);
-    }
+    pump(&emit);
 }
 
 /// Takes one waiting item out of the queue.
 pub fn remove_queued(qid: u64, emit: &Emit) {
-    QUEUE.lock().unwrap().retain(|i| i.qid != qid);
+    STATE.lock().unwrap().queue.retain(|i| i.qid != qid);
     persist_queue();
     send_queue(emit);
 }
 
-/// Empties the queue and stops the running download.
+/// Empties the queue and stops everything that is running.
 pub fn clear_queue(emit: &Emit) {
-    QUEUE.lock().unwrap().clear();
+    STATE.lock().unwrap().queue.clear();
+    cancel(None);
     persist_queue();
     send_queue(emit);
-    cancel();
 }
 
-/// The app is closing: stop yt-dlp but keep the interrupted download (and the rest) saved.
+/// The app is closing: stop yt-dlp but keep the interrupted downloads (and the rest) saved.
 pub fn shutdown() {
     SHUTDOWN.store(true, Ordering::SeqCst);
     persist_queue();
-    cancel();
+    cancel(None);
 }
 
-/// Stops the running yt-dlp (and its ffmpeg child) if any.
-pub fn cancel() {
-    let pid = PID.load(Ordering::SeqCst);
-    if pid != 0 {
-        CANCELLED.store(true, Ordering::SeqCst);
-        let _ = Command::new("taskkill")
-            .args(["/PID", &pid.to_string(), "/T", "/F"])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .creation_flags(CREATE_NO_WINDOW)
-            .status();
+/// Stops one running download (`Some(qid)`) or all of them (`None`), with their ffmpeg children.
+pub fn cancel(qid: Option<u64>) {
+    let targets: Vec<(Arc<AtomicU32>, Arc<AtomicBool>)> = STATE
+        .lock()
+        .unwrap()
+        .active
+        .iter()
+        .filter(|a| qid.map_or(true, |q| a.item.qid == q))
+        .map(|a| (a.pid.clone(), a.cancelled.clone()))
+        .collect();
+    for (pid, cancelled) in targets {
+        cancelled.store(true, Ordering::SeqCst);
+        let pid = pid.load(Ordering::SeqCst);
+        if pid != 0 {
+            let _ = Command::new("taskkill")
+                .args(["/PID", &pid.to_string(), "/T", "/F"])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .creation_flags(CREATE_NO_WINDOW)
+                .status();
+        }
     }
 }
 
@@ -1136,6 +1224,55 @@ mod tests {
             assert!(has(&args, "--no-playlist"), "{bad}");
             assert!(args.last().unwrap().contains("watch?v=dQw4w9WgXcQ"));
         }
+    }
+
+    static RUNNING: AtomicUsize = AtomicUsize::new(0);
+    static MOST: AtomicUsize = AtomicUsize::new(0);
+    static FINISHED: AtomicUsize = AtomicUsize::new(0);
+    fn fake_job(_: &Ctx) -> Result<Option<String>, String> {
+        let now = RUNNING.fetch_add(1, Ordering::SeqCst) + 1;
+        MOST.fetch_max(now, Ordering::SeqCst);
+        std::thread::sleep(Duration::from_millis(60));
+        RUNNING.fetch_sub(1, Ordering::SeqCst);
+        FINISHED.fetch_add(1, Ordering::SeqCst);
+        Ok(None)
+    }
+    fn wait_for(n: usize) {
+        let t = Instant::now();
+        while FINISHED.load(Ordering::SeqCst) < n && t.elapsed() < Duration::from_secs(10) {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    #[test]
+    fn runs_at_most_the_configured_number_of_downloads_at_once() {
+        *JOB_HOOK.lock().unwrap() = Some(fake_job);
+        let emit: Emit = Arc::new(|_| {});
+        let opts = || Opts { mode: "video".into(), ..Default::default() };
+        // limit 2: six downloads, never more than two together; the duplicate is ignored
+        set_limit(2);
+        for i in 0..6 {
+            enqueue(format!("aaaaaaaaaa{i}"), opts(), "x".into(), 0, emit.clone());
+        }
+        enqueue("aaaaaaaaaa0".into(), opts(), "dup".into(), 0, emit.clone());
+        wait_for(6);
+        assert_eq!(FINISHED.load(Ordering::SeqCst), 6, "all six ran (and the duplicate did not)");
+        assert_eq!(MOST.load(Ordering::SeqCst), 2);
+        // limit 1: strictly one after another
+        MOST.store(0, Ordering::SeqCst);
+        set_limit(1);
+        for i in 0..3 {
+            enqueue(format!("bbbbbbbbbb{i}"), opts(), "x".into(), 0, emit.clone());
+        }
+        wait_for(9);
+        assert_eq!(MOST.load(Ordering::SeqCst), 1);
+        // the limit is clamped to the allowed range
+        set_limit(99);
+        assert_eq!(LIMIT.load(Ordering::SeqCst), MAX_PARALLEL);
+        set_limit(0);
+        assert_eq!(LIMIT.load(Ordering::SeqCst), 1);
+        assert_eq!(active_count(), 0);
+        *JOB_HOOK.lock().unwrap() = None;
     }
 
     #[test]

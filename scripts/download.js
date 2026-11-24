@@ -10,11 +10,17 @@
   var ICON = 'M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z';
 
   // State shared with the panel (scripts/ui.js).
-  //   active: null | { title, pct, status }
   //   tools:  { ytdlp|ffmpeg: { state: 'working'|'done'|'error', msg, pct } }
   //   queue:  [{ qid, videoId, label, opts }] waiting (the truth is kept by Rust, src/download.rs)
   //   failed: [{ videoId, label, opts, msg }] downloads that ended in an error (retry from the panel)
-  var dl = window.pctube.dl = { active: null, queue: [], running: false, failed: [], tools: {}, listeners: [] };
+  //   jobs:   [{ qid, videoId, label, title, pct, status, ... }] running now (up to "downloadParallel")
+  var dl = window.pctube.dl = { jobs: [], queue: [], running: false, limit: 2, failed: [], tools: {}, listeners: [] };
+  // The first running download (what older code and the single-line summaries show).
+  Object.defineProperty(dl, 'active', { get: function () { return dl.jobs[0] || null; } });
+  function jobOf(qid) {
+    for (var i = 0; i < dl.jobs.length; i++) if (dl.jobs[i].qid === qid) return dl.jobs[i];
+    return null;
+  }
   dl.on = function (fn) { dl.listeners.push(fn); };
   function emit(ev) { dl.listeners.forEach(function (fn) { try { fn(ev); } catch (e) {} }); }
 
@@ -69,7 +75,7 @@
   // Adds a download to the queue with explicit options (the dialog calls this). Several can be
   // queued; they run one after another.
   function begin(id, opts) {
-    var waiting = !!dl.active || dl.queue.length > 0;
+    var waiting = dl.jobs.length >= (dl.limit || 1) || dl.queue.length > 0;
     var qid = Date.now() * 1000 + Math.floor(Math.random() * 1000);
     var msg = { videoId: id, qid: qid, label: cleanTitle() };
     var extra = extraOptions();
@@ -93,7 +99,8 @@
     }
   }
   window.pctube.download = start;
-  dl.cancel = function () { window.pctube.send('cancelDownload'); };
+  // One running download (by id) or, without id, all of them.
+  dl.cancel = function (qid) { window.pctube.send('cancelDownload', qid ? { qid: qid } : {}); };
   dl.cancelQueued = function (qid) { window.pctube.send('cancelQueued', { qid: qid }); };
   dl.clearAll = function () { window.pctube.send('clearQueue'); };
   dl.resume = function () { window.pctube.send('resumeQueue'); };
@@ -109,21 +116,24 @@
   };
   dl.forget = function (f) { dl.failed = dl.failed.filter(function (x) { return x !== f; }); emit({ kind: 'queued' }); };
 
-  // Events from Rust (src/download.rs).
+  // Events from Rust (src/download.rs). Those of a download carry its qid; with several running
+  // at once, each is followed on its own.
   window.pctube._download = function (ev) {
-    var a = dl.active;
+    var a = jobOf(ev.qid);
+    var lead = a && dl.jobs[0] === a;     // only the first one speaks in toasts (several would flicker)
     switch (ev.kind) {
       case 'queue':
         dl.queue = (ev.queue && ev.queue.items) || [];
         dl.running = !!(ev.queue && ev.queue.running);
+        if (ev.queue && ev.queue.limit) dl.limit = ev.queue.limit;
         break;
       case 'start':
-        dl.active = { qid: ev.qid, videoId: ev.videoId, opts: ev.opts, label: ev.label, title: ev.label || null,
-          pct: 0, status: 'Preparando…', indeterminate: false, prefix: '' };
+        dl.jobs.push({ qid: ev.qid, videoId: ev.videoId, opts: ev.opts, label: ev.label, title: ev.label || null,
+          pct: 0, status: 'Preparando…', indeterminate: false, prefix: '' });
         break;
       case 'status':
         if (a) a.status = ev.msg;
-        toast(ev.msg, 5000);
+        if (!a || lead) toast(ev.msg, 5000);
         break;
       case 'title':
         if (a) a.title = ev.title;
@@ -136,19 +146,20 @@
         // A new step: "Descargando vídeo", "Descargando audio", "Uniendo vídeo y audio",
         // "Convirtiendo audio". pct === null means the step has no measurable progress.
         if (a) { a.status = (a.prefix || '') + ev.label; a.pct = ev.pct == null ? 0 : ev.pct; a.indeterminate = ev.pct == null; }
-        toast((a && a.prefix || '') + ev.label + (ev.pct == null ? '…' : ' · ' + ev.pct + '%'), 1500);
+        if (lead) toast((a.prefix || '') + ev.label + (ev.pct == null ? '…' : ' · ' + ev.pct + '%'), 1500);
         break;
       case 'progress':
         if (a) { a.pct = ev.pct; a.indeterminate = false; }
-        toast((a && a.status && a.status !== 'Preparando…' ? a.status : 'Descargando') + ' · ' + ev.pct + '%', 1500);
+        if (lead) toast((a.status && a.status !== 'Preparando…' ? a.status : 'Descargando') + ' · ' + ev.pct + '%' +
+          (dl.jobs.length > 1 ? ' (+' + (dl.jobs.length - 1) + ' más)' : ''), 1500);
         break;
       case 'done':
-        dl.active = null;
+        dl.jobs = dl.jobs.filter(function (j) { return j.qid !== ev.qid; });
         toast('Descarga completa' + (ev.file ? ': ' + ev.file.split(/[\\/]/).pop() : '') +
           ' (Ajustes → Descargas)', 8000);
         break;
       case 'cancelled':
-        dl.active = null;
+        dl.jobs = dl.jobs.filter(function (j) { return j.qid !== ev.qid; });
         toast('Descarga cancelada', 4000);
         break;
       case 'error':
@@ -156,7 +167,7 @@
           dl.failed.unshift({ videoId: a.videoId, label: a.label || a.title, opts: a.opts, msg: ev.msg });
           dl.failed = dl.failed.slice(0, 20);
         }
-        dl.active = null;
+        dl.jobs = dl.jobs.filter(function (j) { return j.qid !== ev.qid; });
         toast('No se pudo descargar: ' + ev.msg, 10000);
         break;
       case 'tool':

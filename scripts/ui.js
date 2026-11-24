@@ -165,7 +165,7 @@
       clear(queueBox);
       var q = DL.queue || [];
       if (!q.length) {
-        queueBox.appendChild(h('div', { class: 'd' }, 'La cola está vacía. Si descargas algo mientras hay otra descarga en curso, se añade aquí y empieza sola al terminar la anterior.'));
+        queueBox.appendChild(h('div', { class: 'd' }, 'La cola está vacía. Si descargas algo cuando ya hay tantas en curso como permite «Descargas simultáneas» (Opciones de descarga), se añade aquí y empieza sola cuando haya sitio.'));
         return;
       }
       queueBox.appendChild(h('div', { class: 'row nb' }, [
@@ -241,16 +241,19 @@
 
     function renderActive() {
       clear(activeBox);
-      var a = DL.active;
-      if (!a) { activeBox.appendChild(h('div', { class: 'd' }, 'No hay descargas en curso. Usa el botón del reproductor o Alt + D.')); return; }
-      activeBox.appendChild(h('div', { class: 'row nb' }, [
-        h('div', { class: 'lbl grow' }, [
-          h('div', { class: 't clip' }, a.title || 'Obteniendo información…'),
-          h('div', { class: 'd' }, (a.status || '') + (a.indeterminate ? '…' : a.pct ? ' ' + a.pct + '%' : ''))
-        ]),
-        btn('Cancelar', function () { DL.cancel(); }, 'danger')
-      ]));
-      activeBox.appendChild(bar(a.pct, a.indeterminate));
+      var jobs = DL.jobs;
+      if (!jobs.length) { activeBox.appendChild(h('div', { class: 'd' }, 'No hay descargas en curso. Usa el botón del reproductor o Alt + D.')); return; }
+      jobs.forEach(function (a, i) {
+        if (i) activeBox.appendChild(h('div', { class: 'sep' }));
+        activeBox.appendChild(h('div', { class: 'row nb' }, [
+          h('div', { class: 'lbl grow' }, [
+            h('div', { class: 't clip' }, a.title || 'Obteniendo información…'),
+            h('div', { class: 'd' }, (a.status || '') + (a.indeterminate ? '…' : a.pct ? ' ' + a.pct + '%' : ''))
+          ]),
+          btn('Cancelar', function () { DL.cancel(a.qid); }, 'danger')
+        ]));
+        activeBox.appendChild(bar(a.pct, a.indeterminate));
+      });
     }
 
     function renderFiles() {
@@ -652,6 +655,12 @@
       id: 'dl', title: 'Opciones de descarga', build: function () {
         return [
           toggle('enableDownload', 'Botón de descarga', 'Añade un botón al reproductor (y el atajo Alt + D) para descargar el vídeo que estás viendo.'),
+          choice('downloadParallel', 'Descargas simultáneas', 'Cuántas descargas se hacen a la vez; las demás esperan en la cola. Más descargas a la vez usan más red y más procesador (la conversión con ffmpeg es lo que más pesa).', [
+            { value: 1, label: '1 (una tras otra)' },
+            { value: 2, label: '2' },
+            { value: 3, label: '3' },
+            { value: 4, label: '4' }
+          ], true),
           toggle('downloadAsk', 'Elegir formato y calidad antes de descargar', 'Muestra un diálogo con las resoluciones y formatos reales del vídeo. Si lo desactivas, se usan directamente las opciones de abajo.'),
           h('div', { class: 'sub' }, 'Valores por defecto (también se actualizan al elegir en el diálogo)'),
           choice('downloadMode', 'Qué descargar', null, [
@@ -879,6 +888,7 @@
     '.keybtn{min-width:150px;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:7px 12px;font:inherit;cursor:pointer}',
     '.keybtn:hover{border-color:var(--accent)}.keybtn.rec{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent) inset;color:var(--accent)}',
     '.btn.pri{background:var(--accent);color:#0f0f0f;font-weight:500}.btn[disabled]{opacity:.5;cursor:default}',
+    '.sep{border-top:1px solid var(--line);margin:8px 0}',
     '.about p{color:var(--fg2);margin:12px 0}'
   ].join('');
 

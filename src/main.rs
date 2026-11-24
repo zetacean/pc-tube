@@ -228,6 +228,7 @@ fn main() {
             None
         }
     };
+    download::set_limit(cfg.lock().unwrap()["downloadParallel"].as_u64().unwrap_or(2) as usize);
     download::restore_queue(); // what was left unfinished last time (nothing starts by itself)
 
     // Geometry to go back to when the mini-player is closed: (position, size, maximized).

@@ -19,7 +19,7 @@ Carga la interfaz normal de <https://www.youtube.com>.
 - **Subtítulos preferidos**: se activan solos en tu idioma (o se desactivan), con traducción opcional.
 - **Aviso de «ahora suena»**: notificación de Windows con la miniatura cuando empieza un vídeo y la
   ventana no está a la vista.
-- **Cola de descargas**: varias a la vez en cola, cancelar, reintentar las fallidas y retomar lo que
+- **Cola de descargas**: varias a la vez (de 1 a 4, configurable) y en cola, cancelar, reintentar las fallidas y retomar lo que
   quedó pendiente al cerrar la app.
 - **Actualización dentro de la app** (copia instalada): descarga el instalador de GitHub, comprueba su
   suma SHA-256 y se actualiza sola.

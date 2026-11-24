@@ -3,6 +3,11 @@
 Formato: [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/). Las notas de cada versión
 se publican tal cual en su *release* de GitHub (el workflow toma la sección de la versión).
 
+## [0.5.0]
+
+### Añadido
+- **Descargas simultáneas configurables** (Ajustes → Opciones de descarga): de 1 a 4 descargas a la vez, 2 por defecto. Las demás esperan en la cola y empiezan solas al quedar sitio; subir el límite pone en marcha de inmediato las que esperaban. En el panel de Descargas cada una muestra su progreso y se cancela por separado, y la misma descarga no se puede encolar dos veces.
+
 ## [0.4.0]
 
 ### Añadido
