@@ -75,6 +75,17 @@
     return h('div', { class: 'row' }, [label(title, desc), sel]);
   }
 
+  // Multi-line text (one entry per line, or CSS). Saved while typing, after a short pause.
+  function textarea(key, title, desc, placeholder, mono) {
+    var ta = h('textarea', { rows: 6, spellcheck: 'false', placeholder: placeholder || '', class: mono ? 'mono' : '' });
+    ta.value = C.get(key) || '';
+    var timer = null;
+    function save() { clearTimeout(timer); if (ta.value !== (C.get(key) || '')) C.set(key, ta.value); }
+    ta.addEventListener('input', function () { clearTimeout(timer); timer = setTimeout(save, 500); });
+    ta.addEventListener('blur', save);
+    return h('div', { class: 'row col' }, [label(title, desc), ta]);
+  }
+
   function action(title, desc, buttonText, onclick) {
     return h('div', { class: 'row' }, [label(title, desc), h('button', { class: 'btn', type: 'button', onclick: onclick }, buttonText)]);
   }
@@ -257,6 +268,146 @@
 
   window.pctube.dl.on(function (ev) { if (host && dlView) dlView.onEvent(ev); });
 
+  // ---------- Appearance controls ----------
+  function colorInput(key, fallback) {
+    var inp = h('input', { type: 'color', class: 'color' });
+    inp.value = window.pctube.appearance.validColor(C.get(key)) ? C.get(key) : fallback;
+    inp.addEventListener('input', function () { C.set(key, inp.value); });
+    return inp;
+  }
+
+  // Click-to-pick cards with a little preview of the theme's colours. Shows the themes of the mode
+  // YouTube is in right now (dark or light); each mode remembers its own choice.
+  function themePicker(rerender) {
+    var A = window.pctube.appearance;
+    var dark = A.isDark();
+    var K = A.keysByMode[dark ? 'dark' : 'light'];
+    var wrap = h('div', { class: 'row col' }, [label(dark ? 'Tema (modo oscuro)' : 'Tema (modo claro)',
+      'Cambia los colores de fondo de toda la página. Cada modo, claro y oscuro, recuerda su propio tema.')]);
+    var grid = h('div', { class: 'themes' });
+    var cur = C.get(K.theme) || 'default';
+    A.themes.filter(function (t) { return t.mode === 'both' || t.mode === (dark ? 'dark' : 'light'); }).forEach(function (t) {
+      var colors = t.id === 'default' ? (dark ? ['#0f0f0f', '#212121', '#303030'] : ['#ffffff', '#f2f2f2', '#e5e5e5']) :
+        t.id === 'custom' ? [C.get(K.bg) || K.bgDefault, C.get(K.surface) || K.surfaceDefault, dark ? '#3a3a3a' : '#d9d9d9'] : [t.bg, t.surface, t.chip];
+      var card = h('button', { type: 'button', class: 'theme' + (cur === t.id ? ' on' : ''), 'aria-pressed': cur === t.id ? 'true' : 'false',
+        onclick: function () { C.set(K.theme, t.id); rerender(); } }, [
+        h('div', { class: 'prev', style: 'background:' + colors[0] }, [
+          h('div', { class: 'bar2', style: 'background:' + colors[1] }),
+          h('div', { class: 'chip2', style: 'background:' + colors[2] })
+        ]),
+        h('div', { class: 'tn' }, t.name)
+      ]);
+      grid.appendChild(card);
+    });
+    wrap.appendChild(grid);
+    if (cur === 'custom') {
+      wrap.appendChild(h('div', { class: 'pair' }, [
+        h('label', {}, ['Fondo ', colorInput(K.bg, K.bgDefault)]),
+        h('label', {}, ['Tarjetas y menús ', colorInput(K.surface, K.surfaceDefault)])
+      ]));
+    }
+    return wrap;
+  }
+
+  function accentPicker(rerender) {
+    var A = window.pctube.appearance;
+    var cur = C.get('uiAccent') || '';
+    var box = h('div', { class: 'swatches' });
+    A.accents.forEach(function (c) {
+      box.appendChild(h('button', {
+        type: 'button', class: 'swatch' + (cur === c ? ' on' : ''), title: c ? c : 'El de YouTube',
+        style: c ? 'background:' + c : 'background:linear-gradient(135deg,#ff0033 50%,#3ea6ff 50%)',
+        onclick: function () { C.set('uiAccent', c); rerender(); }
+      }));
+    });
+    var custom = colorInput('uiAccent', '#3ea6ff');
+    custom.title = 'Otro color';
+    custom.addEventListener('input', rerenderSoon);
+    var timer = null;
+    function rerenderSoon() { clearTimeout(timer); timer = setTimeout(rerender, 400); }
+    box.appendChild(custom);
+    return h('div', { class: 'row col' }, [
+      label('Color de acento', 'Barra de progreso del vídeo, enlaces y botones destacados.'), box
+    ]);
+  }
+
+  function lookSection() {
+    var A = window.pctube.appearance;
+    var rerender = function () { select('look'); };
+    var advancedOpen = !!(C.get('customCss') || '').trim();
+    var nodes = [
+      choice('uiMode', 'Modo claro u oscuro', 'También con el botón del sol o la luna de la barra superior. «Automático» deja el que tenga YouTube.', [
+        { value: 'auto', label: 'Automático (el de YouTube)' },
+        { value: 'dark', label: 'Oscuro' },
+        { value: 'light', label: 'Claro' }
+      ]),
+      themePicker(rerender),
+      accentPicker(rerender),
+      h('div', { class: 'sub' }, 'Tamaño y forma'),
+      range('uiZoom', 'Tamaño de la página', 'Agranda o reduce todo, como el zoom del navegador (100 % es el normal).', 70, 160, 10, '%'),
+      choice('uiThumbs', 'Esquinas de las miniaturas', null, [
+        { value: 'default', label: 'Redondeadas (como YouTube)' },
+        { value: 'square', label: 'Cuadradas' }
+      ]),
+      choice('uiGridCols', 'Miniaturas por fila en Inicio', 'Más por fila = miniaturas más pequeñas. «Automático» deja que YouTube decida según el ancho de la ventana.', [
+        { value: 0, label: 'Automático' },
+        { value: 3, label: '3' }, { value: 4, label: '4' }, { value: 5, label: '5' },
+        { value: 6, label: '6' }, { value: 7, label: '7' }
+      ], true),
+      h('div', { class: 'sub' }, 'Mostrar u ocultar'),
+      toggle('uiHideChips', 'Barra de categorías', 'Quita la fila de «Todos, Música, Juegos…» de arriba.'),
+      toggle('uiHideRelated', 'Vídeos sugeridos junto al vídeo', 'Quita la columna de recomendaciones al ver un vídeo.'),
+      toggle('uiHideComments', 'Comentarios', 'Quita los comentarios bajo el vídeo.'),
+      toggle('uiHideChat', 'Chat en directo', 'Quita el chat de las transmisiones en directo.'),
+      toggle('uiHidePremium', 'Publicidad de YouTube Premium', 'Quita los botones y avisos para contratar Premium.'),
+      action('Restablecer apariencia', 'Vuelve todo lo de esta sección a como lo deja YouTube.', 'Restablecer', function () {
+        A.reset();
+        rerender();
+      }),
+      h('div', { class: 'sub' }, 'Avanzado')
+    ];
+    // Raw CSS is for people who know it: hidden until asked for.
+    var holder = h('div', {});
+    function showEditor() {
+      clear(holder);
+      holder.appendChild(textarea('customCss', 'CSS propio', 'Solo si sabes CSS. Se aplica al instante sobre todo lo anterior. Si algo se rompe, vacía el cuadro o pulsa «Restablecer apariencia». Ejemplo: ytd-masthead { background: #101820 !important; }', '/* tu CSS */', true));
+    }
+    if (advancedOpen) showEditor();
+    else holder.appendChild(action('Editor de CSS', 'Para quien quiera escribir sus propios estilos.', 'Mostrar editor', showEditor));
+    nodes.push(holder);
+    return nodes;
+  }
+
+  // ---------- Updates ----------
+  function updateRow() {
+    var info = h('div', { class: 'd' }, 'Comprobando…');
+    var openBtn = btn('Ver la versión nueva', function () { window.pctube.send('openRelease'); });
+    openBtn.style.display = 'none';
+    function show(r) {
+      info.textContent = r.newer
+        ? 'Hay una versión nueva: ' + r.latest + ' (tienes la ' + r.current + ').'
+        : 'Estás al día: versión ' + r.current + '.';
+      info.className = 'd ' + (r.newer ? 'warn' : 'ok');
+      openBtn.style.display = r.newer ? '' : 'none';
+    }
+    function check(force) {
+      info.textContent = 'Comprobando…';
+      info.className = 'd';
+      window.pctube.call('checkUpdate', { value: !!force }).then(function (r) {
+        window.pctube.update = r;
+        show(r);
+      }).catch(function (e) {
+        info.textContent = 'No se pudo comprobar: ' + (e && e.message ? e.message : e);
+        info.className = 'd err';
+      });
+    }
+    if (window.pctube.update) show(window.pctube.update); else check(false);
+    return h('div', { class: 'row' }, [
+      h('div', { class: 'lbl' }, [h('div', { class: 't' }, 'Versión'), info]),
+      h('div', { class: 'acts' }, [openBtn, btn('Buscar ahora', function () { check(true); })])
+    ]);
+  }
+
   // ---------- Sections ----------
   var SECTIONS = [
     {
@@ -405,11 +556,24 @@
       }
     },
     {
+      id: 'look', title: 'Apariencia', build: lookSection
+    },
+    {
       id: 'ui', title: 'Interfaz', build: function () {
         return [
           toggle('hideWatchedVideos', 'Ocultar vídeos ya vistos', 'Oculta los vídeos que has visto más allá del umbral indicado.'),
           range('hideWatchedThreshold', 'Umbral de visto', 'Se ocultan los vídeos vistos al menos este porcentaje.', 5, 100, 5, '%'),
           multi('hideWatchedPages', 'Dónde ocultarlos', null, [
+            { value: 'home', label: 'Inicio' },
+            { value: 'subscriptions', label: 'Suscripciones' },
+            { value: 'search', label: 'Búsqueda' },
+            { value: 'watch', label: 'Relacionados' }
+          ]),
+          h('div', { class: 'sub' }, 'Filtros del feed'),
+          toggle('enableFeedFilter', 'Ocultar canales y palabras', 'Esconde los vídeos de los canales o con las palabras que indiques abajo. No toca la página de un canal ni las listas de reproducción.'),
+          textarea('filterChannels', 'Canales a ocultar', 'Uno por línea: el nombre tal como aparece o su @usuario. Mayúsculas y @ no importan. Las líneas que empiezan por # se ignoran.', 'Nombre del canal'),
+          textarea('filterWords', 'Palabras a ocultar', 'Una por línea. Se oculta el vídeo si su título contiene la palabra o frase.', 'reaccionando a'),
+          multi('filterPages', 'Dónde filtrar', null, [
             { value: 'home', label: 'Inicio' },
             { value: 'subscriptions', label: 'Suscripciones' },
             { value: 'search', label: 'Búsqueda' },
@@ -426,7 +590,10 @@
             h('p', {}, 'Adblock, SponsorBlock y DeArrow basados en TizenTube (GPL-3.0).'),
             h('p', {}, 'Los ajustes se guardan en %LOCALAPPDATA%\\PcTube\\config.json.'),
             h('p', {}, 'Atajos: Ctrl + , abre este panel · Alt + M mini-reproductor · Alt + D descargar')
-          ])
+          ]),
+          h('div', { class: 'sub' }, 'Actualizaciones'),
+          toggle('checkUpdates', 'Avisar de nuevas versiones', 'Al abrir la app consulta la última versión publicada en GitHub (solo lee; no instala nada y no envía datos tuyos).'),
+          updateRow()
         ];
       }
     }
@@ -434,9 +601,9 @@
 
   // ---------- Panel ----------
   var CSS = [
-    ':host{all:initial;--bg:var(--yt-spec-base-background,#0f0f0f);--raised:var(--yt-spec-raised-background,#212121);',
-    '--fg:var(--yt-spec-text-primary,#f1f1f1);--fg2:var(--yt-spec-text-secondary,#aaa);',
-    '--line:var(--yt-spec-10-percent-layer,rgba(255,255,255,.12));--hover:var(--yt-spec-badge-chip-background,rgba(255,255,255,.1));--accent:#3ea6ff;',
+    ':host{all:initial;--bg:var(--yt-sys-color-baseline--base-background,#0f0f0f);--raised:var(--yt-sys-color-baseline--raised-background,#212121);',
+    '--fg:var(--yt-sys-color-baseline--text-primary,#f1f1f1);--fg2:var(--yt-sys-color-baseline--text-secondary,#aaa);',
+    '--line:var(--yt-sys-color-baseline--outline,rgba(255,255,255,.12));--hover:var(--yt-sys-color-baseline--additive-background,rgba(255,255,255,.1));--accent:var(--pctube-accent,#3ea6ff);',
     'font:14px/1.4 Roboto,Arial,sans-serif;color:var(--fg)}',
     '.backdrop{position:fixed;inset:0;z-index:2147483645;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center}',
     '.panel{width:min(820px,94vw);height:min(600px,88vh);background:var(--raised);border-radius:14px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 12px 48px rgba(0,0,0,.5)}',
@@ -474,6 +641,19 @@
     '.file{display:flex;align-items:center;gap:8px;padding:10px 0;border-bottom:1px solid var(--line)}',
     '.chips{display:flex;flex-wrap:wrap;gap:8px}',
     '.chip{display:flex;align-items:center;gap:6px;padding:6px 12px;border-radius:16px;background:var(--hover);cursor:pointer}',
+    'textarea{width:100%;box-sizing:border-box;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:10px;font:13px/1.45 Roboto,Arial,sans-serif;resize:vertical;min-height:90px}',
+    'textarea.mono{font-family:Consolas,"Cascadia Mono",monospace;min-height:160px}',
+    '.themes{display:grid;grid-template-columns:repeat(auto-fill,minmax(112px,1fr));gap:10px;width:100%}',
+    '.theme{background:none;border:2px solid var(--line);border-radius:12px;padding:6px;cursor:pointer;color:var(--fg);font:inherit}',
+    '.theme.on{border-color:var(--accent)}.theme:hover{background:var(--hover)}',
+    '.prev{height:54px;border-radius:7px;padding:8px;display:flex;flex-direction:column;gap:6px;box-sizing:border-box}',
+    '.bar2{height:14px;border-radius:4px;width:80%}.chip2{height:8px;border-radius:4px;width:40%}',
+    '.tn{font-size:12px;margin-top:6px;text-align:center}',
+    '.swatches{display:flex;flex-wrap:wrap;gap:10px;align-items:center}',
+    '.swatch{width:30px;height:30px;border-radius:50%;border:2px solid transparent;cursor:pointer;padding:0}',
+    '.swatch.on{border-color:var(--fg);box-shadow:0 0 0 2px var(--raised) inset}',
+    'input.color{width:34px;height:30px;padding:0;border:1px solid var(--line);border-radius:8px;background:none;cursor:pointer}',
+    '.pair{display:flex;gap:20px;flex-wrap:wrap;color:var(--fg2)}.pair label{display:flex;align-items:center;gap:8px}',
     '.about p{color:var(--fg2);margin:12px 0}'
   ].join('');
 
@@ -533,6 +713,10 @@
 
   window.pctube.openSettings = open;
 
+  // The panel's themes follow the mode: redraw when it flips (button, setting or YouTube itself).
+  window.pctube.appearance.onMode(function () { if (host && activeId === 'look') select('look'); });
+  window.pctube.config.onChange(function (key) { if (key === 'uiMode' && host && activeId === 'look') setTimeout(function () { select('look'); }, 100); });
+
   // Ctrl + ,
   window.addEventListener('keydown', function (e) {
     if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key === ',') { e.preventDefault(); open(); }
@@ -542,6 +726,21 @@
   var GEAR = 'M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.488.488 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.484.484 0 0 0-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z';
 
   var DL_ICON = 'M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z';
+  var SUN = 'M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10zM2 13h2a1 1 0 0 0 0-2H2a1 1 0 0 0 0 2zm18 0h2a1 1 0 0 0 0-2h-2a1 1 0 0 0 0 2zM11 2v2a1 1 0 0 0 2 0V2a1 1 0 0 0-2 0zm0 18v2a1 1 0 0 0 2 0v-2a1 1 0 0 0-2 0zM5.99 4.58a1 1 0 0 0-1.41 1.41l1.06 1.06a1 1 0 0 0 1.41-1.41L5.99 4.58zm12.37 12.37a1 1 0 0 0-1.41 1.41l1.06 1.06a1 1 0 0 0 1.41-1.41l-1.06-1.06zm1.06-10.96a1 1 0 0 0-1.41-1.41l-1.06 1.06a1 1 0 0 0 1.41 1.41l1.06-1.06zM7.05 18.36a1 1 0 0 0-1.41-1.41l-1.06 1.06a1 1 0 0 0 1.41 1.41l1.06-1.06z';
+  var MOON = 'M12.34 2.02A10 10 0 1 0 21.98 14.4a8 8 0 0 1-9.64-12.38z';
+
+  // Sun/moon button: flips light <-> dark.
+  function paintModeButton(btn) {
+    var dark = window.pctube.appearance.isDark();
+    var path = btn.querySelector('path');
+    if (path) path.setAttribute('d', dark ? SUN : MOON);
+    btn.title = dark ? 'Cambiar a modo claro' : 'Cambiar a modo oscuro';
+    btn.setAttribute('aria-label', btn.title);
+  }
+  window.pctube.appearance.onMode(function () {
+    var b = document.getElementById('pctube-mode');
+    if (b) paintModeButton(b);
+  });
 
   function mastheadButton(id, title, pathData, onclick) {
     var ns = 'http://www.w3.org/2000/svg';
@@ -556,10 +755,10 @@
     var b = h('button', {
       id: id, type: 'button', title: title, 'aria-label': title,
       style: 'width:40px;height:40px;border:0;border-radius:50%;background:transparent;cursor:pointer;' +
-        'color:var(--yt-spec-text-primary,#f1f1f1);display:flex;align-items:center;justify-content:center;margin-right:4px;',
+        'color:var(--yt-sys-color-baseline--text-primary,#f1f1f1);display:flex;align-items:center;justify-content:center;margin-right:4px;',
       onclick: onclick
     }, svg);
-    b.addEventListener('mouseenter', function () { b.style.background = 'var(--yt-spec-badge-chip-background,rgba(255,255,255,.1))'; });
+    b.addEventListener('mouseenter', function () { b.style.background = 'var(--yt-sys-color-baseline--additive-background,rgba(255,255,255,.1))'; });
     b.addEventListener('mouseleave', function () { b.style.background = 'transparent'; });
     return b;
   }
@@ -569,6 +768,11 @@
     if (!buttons) return;
     if (!document.getElementById('pctube-gear')) {
       buttons.insertBefore(mastheadButton('pctube-gear', 'Ajustes de PC Tube (Ctrl+,)', GEAR, function () { open(); }), buttons.firstChild);
+    }
+    if (!document.getElementById('pctube-mode')) {
+      var mb = mastheadButton('pctube-mode', '', MOON, function () { window.pctube.appearance.toggleMode(); });
+      buttons.insertBefore(mb, document.getElementById('pctube-gear'));
+      paintModeButton(mb);
     }
     if (!document.getElementById('pctube-dlhub')) {
       buttons.insertBefore(mastheadButton('pctube-dlhub', 'Descargas', DL_ICON, function () { open('dlhub'); }), document.getElementById('pctube-gear'));

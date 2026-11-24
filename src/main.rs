@@ -1,3 +1,4 @@
+#![recursion_limit = "256"] // config::defaults() is one big json! literal
 #![windows_subsystem = "windows"]
 
 mod autostart;
@@ -9,6 +10,7 @@ mod ipc;
 mod net;
 mod taskbar;
 mod tray;
+mod update;
 mod winstate;
 
 use std::sync::{Arc, Mutex};
@@ -48,6 +50,7 @@ fn init_script() -> String {
         include_str!("../scripts/adblock.js"),
         include_str!("../scripts/sponsorblock.js"),
         include_str!("../scripts/features.js"),
+        include_str!("../scripts/appearance.js"),
         include_str!("../scripts/mini.js"),
         include_str!("../scripts/playback.js"),
         include_str!("../scripts/download.js"),
@@ -56,6 +59,7 @@ fn init_script() -> String {
         include_str!("../scripts/quality.js"),
         include_str!("../scripts/boost.js"),
         include_str!("../scripts/native.js"),
+        include_str!("../scripts/update.js"),
         include_str!("../scripts/tray.js"),
         include_str!("../scripts/ui.js"),
         include_str!("../scripts/titlebar.js"),
@@ -207,6 +211,10 @@ fn main() {
         let _ = webview.evaluate_script(&js);
     };
 
+    // Page zoom from Ajustes -> Apariencia (the mini-player always uses 100 %).
+    let mut zoom = (cfg.lock().unwrap()["uiZoom"].as_f64().unwrap_or(100.0) / 100.0).clamp(0.5, 2.0);
+    let _ = webview.zoom(zoom);
+
     // Global shortcuts (Ctrl+Alt+Space / Right / Left).
     let mut _hotkeys = if cfg.lock().unwrap()["globalHotkeys"].as_bool().unwrap_or(true) {
         hotkeys::Hotkeys::register(proxy.clone())
@@ -290,6 +298,7 @@ fn main() {
                                 ));
                             }
                             window.set_always_on_top(true);
+                            let _ = webview.zoom(1.0);
                         }
                     }
                     WinCmd::Mini(false) => {
@@ -301,9 +310,16 @@ fn main() {
                             }
                             let on = cfg.lock().unwrap()["alwaysOnTop"].as_bool().unwrap_or(false);
                             window.set_always_on_top(on);
+                            let _ = webview.zoom(zoom);
                         }
                     }
                     WinCmd::Mini(true) => {}
+                    WinCmd::Zoom(z) => {
+                        zoom = z;
+                        if mini.is_none() {
+                            let _ = webview.zoom(z);
+                        }
+                    }
                     #[allow(unused_assignments)]
                     WinCmd::Hotkeys(on) => {
                         _hotkeys = None; // unregister first (the same keys can't be taken twice)

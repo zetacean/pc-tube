@@ -8,6 +8,8 @@
   window.pctube.config.onChange(function (key, value) {
     if (key === 'alwaysOnTop') {
       window.pctube.send('window', { cmd: 'alwaysOnTop', value: !!value });
+    } else if (key === 'uiZoom') {
+      window.pctube.send('window', { cmd: 'zoom', value: Number(value) / 100 });
     } else if (key === 'globalHotkeys') {
       window.pctube.send('window', { cmd: 'hotkeys', value: !!value });
     } else if (key === 'autostart') {

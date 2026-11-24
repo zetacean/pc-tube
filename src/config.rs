@@ -71,6 +71,30 @@ pub fn defaults() -> Value {
         "downloadEmbedMeta": true,        // title, channel and cover inside the file (needs ffmpeg)
         "downloadRemoveSponsors": false,  // cut the SponsorBlock "skip automatically" categories out
 
+        "checkUpdates": true,       // look for a newer release on GitHub at startup
+        "customCss": "",            // advanced: user CSS applied on top of youtube.com
+        // Appearance (Ajustes -> Apariencia)
+        "uiMode": "auto",           // auto (YouTube's own) | dark | light
+        "uiTheme": "default",       // dark mode theme: default | oled | graphite | midnight | ocean | forest | violet | wine | custom
+        "uiBg": "#0f0f0f",          // custom dark theme: page colour
+        "uiSurface": "#1a1a1a",     // custom dark theme: cards and menus
+        "uiThemeLight": "default",  // light mode theme: default | paper | sky | mint | rose | lilac | sand | custom
+        "uiBgLight": "#ffffff",
+        "uiSurfaceLight": "#f2f2f2",
+        "uiAccent": "",             // "" = YouTube's own, or "#rrggbb"
+        "uiThumbs": "default",      // default | square
+        "uiGridCols": 0,            // thumbnails per row on the home page, 0 = automatic
+        "uiZoom": 100,              // page zoom in %
+        "uiHideComments": false,
+        "uiHideRelated": false,
+        "uiHideChips": false,
+        "uiHideChat": false,
+        "uiHidePremium": false,
+        "enableFeedFilter": true,
+        "filterChannels": "",       // one channel name or @handle per line
+        "filterWords": "",          // one word or phrase per line, matched in the title
+        "filterPages": ["home", "subscriptions", "search", "watch"],
+
         "hideShorts": false,
         "hideEndScreenCards": false,
         "hidePaidPromotionOverlay": false,

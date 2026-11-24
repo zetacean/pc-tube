@@ -50,6 +50,8 @@ pub enum WinCmd {
     AlwaysOnTop(bool),
     /// Mini-player: small always-on-top window in the corner (and back).
     Mini(bool),
+    /// Page zoom (1.0 = 100 %).
+    Zoom(f64),
     /// Global shortcuts on/off.
     Hotkeys(bool),
     /// Just re-send the maximized/fullscreen state to the page.
@@ -87,6 +89,7 @@ fn parse_win_cmd(cmd: &str, value: &Option<Value>) -> Option<WinCmd> {
         "fullscreen" => WinCmd::Fullscreen(value.as_ref().and_then(Value::as_bool).unwrap_or(false)),
         "alwaysOnTop" => WinCmd::AlwaysOnTop(value.as_ref().and_then(Value::as_bool).unwrap_or(false)),
         "hotkeys" => WinCmd::Hotkeys(value.as_ref().and_then(Value::as_bool).unwrap_or(false)),
+        "zoom" => WinCmd::Zoom(value.as_ref().and_then(Value::as_f64).unwrap_or(1.0).clamp(0.5, 2.0)),
         "mini" => WinCmd::Mini(value.as_ref().and_then(Value::as_bool).unwrap_or(false)),
         "resize" =>WinCmd::Resize(match value.as_ref().and_then(Value::as_str)? {
             "n" => D::North,
@@ -212,12 +215,21 @@ pub fn handle(body: &str, cfg: &Config, emit: impl Fn(Out) + Send + 'static) {
                         // Settings with an effect outside the page.
                         crate::autostart::set(now["autostart"].as_bool().unwrap_or(false));
                         shared(Out::Window(WinCmd::AlwaysOnTop(now["alwaysOnTop"].as_bool().unwrap_or(false))));
+                        shared(Out::Window(WinCmd::Zoom(now["uiZoom"].as_f64().unwrap_or(100.0) / 100.0)));
                         respond(m.id, true, json!({ "applied": n, "config": now }));
                     }
                 }
             });
         }
         // From the page, e.g. "back to tab" in the PiP window: show the main window.
+        "checkUpdate" => {
+            let force = m.value.as_ref().and_then(Value::as_bool).unwrap_or(false);
+            std::thread::spawn(move || match crate::update::check(force) {
+                Ok(v) => respond(m.id, true, v),
+                Err(e) => respond(m.id, false, Value::String(e)),
+            });
+        }
+        "openRelease" => crate::update::open_release_page(),
         "showWindow" => (emit.lock().unwrap())(Out::Tray(TrayAction::Show)),
         "cancelDownload" => crate::download::cancel(),
         "installYtdlp" => crate::download::install_ytdlp_task(shared_emit(&emit)),

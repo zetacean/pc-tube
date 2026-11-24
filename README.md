@@ -12,6 +12,8 @@ Carga la interfaz normal de <https://www.youtube.com>.
 - **Bloqueo de anuncios** (vídeo y feeds) y **SponsorBlock** con modo por categoría
   (saltar solo, botón para saltar, solo marcar, desactivado).
 - **DeArrow**: títulos y miniaturas de la comunidad, y corrección de títulos EN MAYÚSCULAS.
+- **Apariencia** a golpe de clic (temas, color de acento, zoom, miniaturas, qué mostrar), filtros del feed
+  (canales y palabras) y aviso de nuevas versiones (Ajustes → Apariencia, Interfaz y Acerca de).
 - **Mini-reproductor** (botón en el reproductor o `Alt+M`): ventana pequeña siempre visible en la
   esquina. Al cerrarlo puedes volver a la ventana completa o pausar el vídeo (configurable).
 - **Descargas** de vídeos y listas de reproducción completas con yt-dlp (`Alt+D`): diálogo con las resoluciones reales del vídeo, formato

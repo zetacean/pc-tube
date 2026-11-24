@@ -23,9 +23,9 @@
     b.title = title;
     b.setAttribute('aria-label', title);
     b.style.cssText = 'width:40px;height:40px;border:0;border-radius:50%;background:transparent;cursor:pointer;' +
-      'color:var(--yt-spec-text-primary,#f1f1f1);display:flex;align-items:center;justify-content:center;flex:none;';
+      'color:var(--yt-sys-color-baseline--text-primary,#f1f1f1);display:flex;align-items:center;justify-content:center;flex:none;';
     b.addEventListener('mouseenter', function () {
-      if (!b.disabled) b.style.background = 'var(--yt-spec-badge-chip-background,rgba(255,255,255,.1))';
+      if (!b.disabled) b.style.background = 'var(--yt-sys-color-baseline--additive-background,rgba(255,255,255,.1))';
     });
     b.addEventListener('mouseleave', function () { b.style.background = 'transparent'; });
     b.addEventListener('click', onclick);

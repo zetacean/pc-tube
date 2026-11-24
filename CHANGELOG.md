@@ -3,6 +3,17 @@
 Formato: [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/). Las notas de cada versión
 se publican tal cual en su *release* de GitHub (el workflow toma la sección de la versión).
 
+## [0.3.0]
+
+### Añadido
+- **Aviso de nueva versión**: al abrir la app consulta la última versión publicada en GitHub y
+  avisa una vez por versión. En Ajustes → Acerca de hay un botón para buscar ahora y abrir la
+  página de la versión. Solo lee; no instala nada. Se puede desactivar.
+- **Filtros del feed**: oculta vídeos por canal (nombre o @usuario) o por palabras del título, en
+  Inicio, Suscripciones, Búsqueda y Relacionados (Ajustes → Interfaz).
+- **Apariencia** (Ajustes → Apariencia), sin escribir código: modo claro u oscuro (con un botón de sol/luna en la barra superior), 7 temas oscuros y 6 claros con vista previa y uno propio por modo con selector de color, color de acento, tamaño de la página, miniaturas cuadradas o redondeadas, miniaturas por fila, y ocultar la barra de categorías, los vídeos sugeridos, los comentarios, el chat en directo y la publicidad de Premium. Incluye «Restablecer apariencia».
+- **Editor de CSS** para quien sepa, oculto dentro de Apariencia hasta que se pide.
+
 ## [0.2.0]
 
 ### Añadido

@@ -65,7 +65,21 @@
     }
     styleEl.textContent = css;
     if (!styleEl.isConnected) (document.head || document.documentElement).appendChild(styleEl);
+
+    // The user's own CSS goes in its own element, so a mistake in it can't break the rest.
+    var user = String(C.get('customCss') || '').slice(0, 20000);
+    if (user.trim()) {
+      if (!userStyleEl) {
+        userStyleEl = document.createElement('style');
+        userStyleEl.id = 'pctube-user-css';
+      }
+      if (userStyleEl.textContent !== user) userStyleEl.textContent = user;
+      if (!userStyleEl.isConnected) (document.head || document.documentElement).appendChild(userStyleEl);
+    } else if (userStyleEl && userStyleEl.isConnected) {
+      userStyleEl.remove();
+    }
   }
+  var userStyleEl = null;
 
   // ---------- "Are you still watching?" ----------
   setInterval(function () {
@@ -226,14 +240,63 @@
     return isNaN(w) ? 0 : w;
   }
 
+  // ---------- Feed filters (channels and words) ----------
+  function lines(v) {
+    return String(v || '').split(/\r?\n/).map(function (x) { return x.trim().toLowerCase(); })
+      .filter(function (x) { return x && x.charAt(0) !== '#'; });
+  }
+  var filterCache = { key: null, value: null };
+  function filters() {
+    if (C.get('enableFeedFilter') === false) return null;
+    if ((C.get('filterPages') || []).indexOf(currentPage()) === -1) return null;
+    var ch = String(C.get('filterChannels') || ''), wd = String(C.get('filterWords') || '');
+    var key = ch + '\u0001' + wd;
+    if (filterCache.key !== key) {
+      filterCache.key = key;
+      var channels = lines(ch).map(function (c) { return c.replace(/^@/, ''); });
+      var words = lines(wd);
+      filterCache.value = (channels.length || words.length) ? { channels: channels, words: words } : null;
+    }
+    return filterCache.value;
+  }
+  // Names and handles of the channel shown in a video card.
+  function channelKeysOf(item) {
+    var keys = [];
+    var links = item.querySelectorAll('a[href^="/@"],a[href^="/channel/"],a[href^="/c/"],a[href^="/user/"]');
+    for (var i = 0; i < links.length; i++) {
+      var seg = (links[i].getAttribute('href') || '').split('?')[0].split('/')[1] || '';
+      try { seg = decodeURIComponent(seg); } catch (e) {}
+      if (seg) keys.push(seg.toLowerCase().replace(/^@/, ''));
+      var t = (links[i].textContent || '').trim().toLowerCase();
+      if (t) keys.push(t.replace(/^@/, ''));
+    }
+    var nm = item.querySelector('ytd-channel-name');
+    if (nm && nm.textContent.trim()) keys.push(nm.textContent.trim().toLowerCase());
+    return keys;
+  }
+  function filteredOut(item, f) {
+    if (!f) return false;
+    if (f.channels.length) {
+      var keys = channelKeysOf(item);
+      for (var i = 0; i < keys.length; i++) if (f.channels.indexOf(keys[i]) !== -1) return true;
+    }
+    if (f.words.length) {
+      var t = titleElOf(item);
+      var title = ((t && t.textContent) || item.getAttribute('aria-label') || '').toLowerCase();
+      if (title) for (var j = 0; j < f.words.length; j++) if (title.indexOf(f.words[j]) !== -1) return true;
+    }
+    return false;
+  }
+
   function hideWatched() {
     var items = document.querySelectorAll(ITEM_SEL);
     var on = C.get('hideWatchedVideos') &&
       (C.get('hideWatchedPages') || []).indexOf(currentPage()) !== -1;
     var threshold = C.get('hideWatchedThreshold') || 80;
+    var f = filters();
     for (var i = 0; i < items.length; i++) {
       var it = items[i];
-      if (on && watchedPercent(it) >= threshold) {
+      if ((on && watchedPercent(it) >= threshold) || filteredOut(it, f)) {
         if (it.dataset.pctubeHidden === undefined) it.dataset.pctubeHidden = it.style.display || '';
         it.style.display = 'none';
       } else if (it.dataset.pctubeHidden !== undefined) {

@@ -45,20 +45,20 @@
     b.title = title;
     b.setAttribute('aria-label', title);
     b.style.cssText = 'width:' + BTN_W + 'px;height:' + BAR_H + 'px;border:0;padding:0;margin:0;cursor:default;' +
-      'background:transparent;color:var(--yt-spec-text-primary,#f1f1f1);display:flex;align-items:center;justify-content:center;';
+      'background:transparent;color:var(--yt-sys-color-baseline--text-primary,#f1f1f1);display:flex;align-items:center;justify-content:center;';
     b.addEventListener('mouseenter', function () {
       b.style.background = hoverBg;
       if (hoverBg === '#e81123') b.style.color = '#fff';
     });
     b.addEventListener('mouseleave', function () {
       b.style.background = 'transparent';
-      b.style.color = 'var(--yt-spec-text-primary,#f1f1f1)';
+      b.style.color = 'var(--yt-sys-color-baseline--text-primary,#f1f1f1)';
     });
     b.addEventListener('click', onclick);
     return b;
   }
 
-  var HOVER = 'var(--yt-spec-badge-chip-background,rgba(255,255,255,.12))';
+  var HOVER = 'var(--yt-sys-color-baseline--additive-background,rgba(255,255,255,.12))';
 
   // Pin: keep the window above all others (also in Ajustes → General).
   var PIN = 'M16 9V4h1c.55 0 1-.45 1-1s-.45-1-1-1H7c-.55 0-1 .45-1 1s.45 1 1 1h1v5c0 1.66-1.34 3-3 3v2h5.97v7l1 1 1-1v-7H19v-2c-1.66 0-3-1.34-3-3z';

@@ -63,9 +63,9 @@
   ];
 
   var CSS = [
-    ':host{all:initial;--bg:var(--yt-spec-base-background,#0f0f0f);--raised:var(--yt-spec-raised-background,#212121);',
-    '--fg:var(--yt-spec-text-primary,#f1f1f1);--fg2:var(--yt-spec-text-secondary,#aaa);',
-    '--line:var(--yt-spec-10-percent-layer,rgba(255,255,255,.12));--hover:var(--yt-spec-badge-chip-background,rgba(255,255,255,.1));--accent:#3ea6ff;',
+    ':host{all:initial;--bg:var(--yt-sys-color-baseline--base-background,#0f0f0f);--raised:var(--yt-sys-color-baseline--raised-background,#212121);',
+    '--fg:var(--yt-sys-color-baseline--text-primary,#f1f1f1);--fg2:var(--yt-sys-color-baseline--text-secondary,#aaa);',
+    '--line:var(--yt-sys-color-baseline--outline,rgba(255,255,255,.12));--hover:var(--yt-sys-color-baseline--additive-background,rgba(255,255,255,.1));--accent:var(--pctube-accent,#3ea6ff);',
     'font:14px/1.4 Roboto,Arial,sans-serif;color:var(--fg)}',
     '.backdrop{position:fixed;inset:0;z-index:2147483645;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center}',
     '.dlg{width:min(520px,94vw);max-height:90vh;overflow:auto;background:var(--raised);border-radius:14px;box-shadow:0 12px 48px rgba(0,0,0,.5);padding:20px 22px}',
