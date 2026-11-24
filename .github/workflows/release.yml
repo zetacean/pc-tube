@@ -1,0 +1,76 @@
+name: Release
+
+# Pushing a tag like v0.2.0 builds the app, the zip and the installer, and publishes a GitHub
+# release whose notes are the matching section of CHANGELOG.md.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read the version
+        id: ver
+        shell: pwsh
+        run: |
+          $ver = (Select-String -Path Cargo.toml -Pattern '^version\s*=\s*"([^"]+)"' | Select-Object -First 1).Matches[0].Groups[1].Value
+          "version=$ver" >> $env:GITHUB_OUTPUT
+          if ($env:GITHUB_REF -like 'refs/tags/v*') {
+            $tag = $env:GITHUB_REF_NAME.TrimStart('v')
+            if ($ver -ne $tag) { throw "La etiqueta ($tag) no coincide con la version de Cargo.toml ($ver)" }
+          }
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Tests
+        run: cargo test --release
+
+      - name: Build, zip and installer
+        shell: pwsh
+        run: ./tools/package.ps1 -Installer
+
+      - name: Release notes
+        shell: pwsh
+        run: |
+          $ver = '${{ steps.ver.outputs.version }}'
+          $text = Get-Content CHANGELOG.md -Raw -Encoding UTF8
+          $m = [regex]::Match($text, "(?ms)^## \[$([regex]::Escape($ver))\][^\n]*\n(.*?)(?=^## \[|\z)")
+          if ($m.Success -and $m.Groups[1].Value.Trim()) { $body = $m.Groups[1].Value.Trim() }
+          else { $body = "Version $ver."; Write-Warning "CHANGELOG.md no tiene seccion para $ver" }
+          $body += "`n`n**Descargas:** ``PC-Tube-$ver-setup.exe`` (instalador, sin administrador) o ``PC-Tube-$ver-win64.zip`` (portatil). Requiere el runtime de Microsoft Edge WebView2 (incluido en Windows 11)."
+          Set-Content -Path release-notes.md -Value $body -Encoding UTF8
+
+      - name: Checksums
+        shell: pwsh
+        run: |
+          Set-Location dist
+          Get-ChildItem *.zip, *-setup.exe | ForEach-Object {
+            "$((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower())  $($_.Name)"
+          } | Set-Content SHA256SUMS.txt -Encoding ascii
+
+      - name: Publish the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ver = '${{ steps.ver.outputs.version }}'
+          gh release create $env:GITHUB_REF_NAME --title "PC Tube $ver" --notes-file release-notes.md "dist/PC-Tube-$ver-win64.zip" "dist/PC-Tube-$ver-setup.exe" dist/SHA256SUMS.txt
+
+      - name: Keep the files (manual runs)
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: pc-tube
+          path: |
+            dist/*.zip
+            dist/*-setup.exe
+            release-notes.md

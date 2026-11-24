@@ -1,0 +1,577 @@
+// PC Tube settings panel. Opens with the gear in the YouTube top bar or Ctrl+, .
+// Layout inspired by TizenTube's settings menu (sections on the left, options on the right).
+// Built with createElement only (youtube.com enforces Trusted Types, so no innerHTML).
+(function () {
+  'use strict';
+  if (window.top !== window || window.__pctubeUi || !window.pctube) return;
+  window.__pctubeUi = true;
+
+  var C = window.pctube.config;
+  var SB = window.pctube.sb;
+
+  // ---------- DOM helper ----------
+  function h(tag, attrs, kids) {
+    var e = document.createElement(tag);
+    for (var k in (attrs || {})) {
+      var v = attrs[k];
+      if (k === 'class') e.className = v;
+      else if (k === 'style') e.style.cssText = v;
+      else if (k.indexOf('on') === 0) e.addEventListener(k.slice(2), v);
+      else e.setAttribute(k, v);
+    }
+    (function add(list) {
+      [].concat(list || []).forEach(function (c) {
+        if (Array.isArray(c)) add(c);
+        else if (c != null && c !== false) e.appendChild(typeof c === 'string' ? document.createTextNode(c) : c);
+      });
+    })(kids);
+    return e;
+  }
+
+  // ---------- Controls ----------
+  function label(title, desc) {
+    return h('div', { class: 'lbl' }, [h('div', { class: 't' }, title), desc ? h('div', { class: 'd' }, desc) : null]);
+  }
+
+  function toggle(key, title, desc) {
+    var sw = h('button', { class: 'switch', role: 'switch', type: 'button' });
+    function paint() { sw.setAttribute('aria-checked', C.get(key) ? 'true' : 'false'); }
+    sw.addEventListener('click', function () { C.set(key, !C.get(key)); paint(); });
+    paint();
+    return h('div', { class: 'row' }, [label(title, desc), sw]);
+  }
+
+  function range(key, title, desc, min, max, step, suffix) {
+    var out = h('span', { class: 'val' });
+    var input = h('input', { type: 'range', min: min, max: max, step: step });
+    input.value = C.get(key);
+    function paint() { out.textContent = input.value + suffix; }
+    input.addEventListener('input', paint);
+    input.addEventListener('change', function () { C.set(key, Number(input.value)); });
+    paint();
+    return h('div', { class: 'row' }, [label(title, desc), h('div', { class: 'rng' }, [input, out])]);
+  }
+
+  function multi(key, title, desc, options) {
+    var box = h('div', { class: 'chips' });
+    options.forEach(function (o) {
+      var cb = h('input', { type: 'checkbox' });
+      cb.checked = (C.get(key) || []).indexOf(o.value) !== -1;
+      cb.addEventListener('change', function () {
+        var set = (C.get(key) || []).filter(function (x) { return x !== o.value; });
+        if (cb.checked) set.push(o.value);
+        C.set(key, set);
+      });
+      box.appendChild(h('label', { class: 'chip' }, [cb, o.label]));
+    });
+    return h('div', { class: 'row col' }, [label(title, desc), box]);
+  }
+
+  // options: [{value, label}]. Values are compared as strings; numeric=true stores a Number.
+  function choice(key, title, desc, options, numeric) {
+    var sel = h('select', {}, options.map(function (o) { return h('option', { value: String(o.value) }, o.label); }));
+    sel.value = String(C.get(key));
+    sel.addEventListener('change', function () { C.set(key, numeric ? Number(sel.value) : sel.value); });
+    return h('div', { class: 'row' }, [label(title, desc), sel]);
+  }
+
+  function action(title, desc, buttonText, onclick) {
+    return h('div', { class: 'row' }, [label(title, desc), h('button', { class: 'btn', type: 'button', onclick: onclick }, buttonText)]);
+  }
+
+  var MODE_LABELS = { auto: 'Saltar automáticamente', manual: 'Mostrar botón para saltar', show: 'Solo marcar en la barra', off: 'Desactivado' };
+
+  function sbModes() {
+    var wrap = h('div', { class: 'modes' });
+    SB.categories.forEach(function (cat) {
+      var modes = cat.id === 'poi_highlight' ? ['manual', 'show', 'off'] : ['auto', 'manual', 'show', 'off'];
+      var sel = h('select', {}, modes.map(function (m) {
+        var o = h('option', { value: m }, cat.id === 'poi_highlight' && m === 'manual' ? 'Mostrar botón para ir' : MODE_LABELS[m]);
+        return o;
+      }));
+      sel.value = SB.mode(cat.id);
+      sel.addEventListener('change', function () {
+        var all = {};
+        SB.categories.forEach(function (c) { all[c.id] = SB.mode(c.id); });
+        all[cat.id] = sel.value;
+        C.set('sponsorBlockModes', all);
+      });
+      wrap.appendChild(h('div', { class: 'row' }, [
+        h('div', { class: 'lbl' }, [h('div', { class: 't' }, [h('span', { class: 'dot', style: 'background:' + cat.color }), cat.name])]),
+        sel
+      ]));
+    });
+    return wrap;
+  }
+
+  // ---------- Downloads view (tools, active download, files) ----------
+  var dlView = null;
+
+  function fmtSize(n) {
+    if (n >= 1073741824) return (n / 1073741824).toFixed(2) + ' GB';
+    if (n >= 1048576) return (n / 1048576).toFixed(1) + ' MB';
+    return Math.max(1, Math.round(n / 1024)) + ' KB';
+  }
+  function fmtDate(ms) {
+    return ms ? new Date(ms).toLocaleString('es', { dateStyle: 'medium', timeStyle: 'short' }) : '';
+  }
+  // indeterminate=true: animated bar for steps whose progress can't be measured.
+  function bar(pct, indeterminate) {
+    var fill = h('div', { class: 'fill' });
+    fill.style.width = (pct || 0) + '%';
+    return h('div', { class: 'bar' + (indeterminate ? ' ind' : '') }, fill);
+  }
+  function clear(el) { while (el.firstChild) el.removeChild(el.firstChild); }
+  function btn(text, onclick, extra) {
+    return h('button', { class: 'btn sm' + (extra ? ' ' + extra : ''), type: 'button', onclick: onclick }, text);
+  }
+
+  function downloadsView() {
+    var DL = window.pctube.dl;
+    var info = null;
+    var toolsBox = h('div', { class: 'card' });
+    var activeBox = h('div', { class: 'card' });
+    var filesBox = h('div', {});
+    var root = h('div', {}, [
+      h('div', { class: 'sub' }, 'Herramientas'), toolsBox,
+      h('div', { class: 'sub' }, 'En curso'), activeBox,
+      h('div', { class: 'sub' }, 'Archivos descargados'), filesBox
+    ]);
+
+    function toolRow(tool, name, statusText, installedActions) {
+      var st = DL.tools[tool];
+      var working = st && st.state === 'working';
+      var right;
+      if (working) {
+        right = h('div', { class: 'prog' }, [bar(st.pct), h('div', { class: 'd' }, st.msg + (st.pct != null ? ' ' + st.pct + '%' : ''))]);
+      } else {
+        right = h('div', { class: 'acts' }, installedActions);
+      }
+      var desc = [h('div', { class: 'd' }, statusText)];
+      if (st && st.state === 'error') desc.push(h('div', { class: 'd err' }, 'Error: ' + st.msg));
+      else if (st && st.state === 'done') desc.push(h('div', { class: 'd ok' }, st.msg));
+      return h('div', { class: 'row tool' }, [h('div', { class: 'lbl' }, [h('div', { class: 't' }, name), desc]), right]);
+    }
+
+    function renderTools() {
+      clear(toolsBox);
+      if (!info) { toolsBox.appendChild(h('div', { class: 'd' }, 'Comprobando…')); return; }
+      var y = info.ytdlp, f = info.ffmpeg;
+      toolsBox.appendChild(toolRow('ytdlp', 'yt-dlp',
+        y.installed
+          ? 'Instalado' + (y.version ? ' · versión ' + y.version : y.version === undefined ? ' · comprobando versión…' : '') + (y.source === 'system' ? ' · del sistema' : ' · en la carpeta de la app')
+          : 'No instalado. Se instala solo con la primera descarga, o ahora con el botón.',
+        y.installed
+          ? [btn('Buscar actualización', function () { window.pctube.send('updateYtdlp'); })]
+          : [btn('Instalar', function () { window.pctube.send('installYtdlp'); })]));
+      toolsBox.appendChild(toolRow('ffmpeg', 'ffmpeg',
+        f.installed
+          ? 'Instalado' + (f.source === 'system' ? ' · del sistema (PATH)' : ' · en la carpeta de la app') + ' · calidad máxima y MP3 disponibles'
+          : 'No instalado. Necesario para la mejor calidad (unir vídeo y audio) y para MP3. Descarga de ≈ 90 MB.',
+        f.installed ? [] : [btn('Instalar ffmpeg', function () { window.pctube.send('installFfmpeg'); })]));
+      toolsBox.appendChild(h('div', { class: 'd note' }, 'Se descargan de sus repositorios oficiales de GitHub, se verifican con SHA-256 y se guardan en %LOCALAPPDATA%\\PcTube\\bin.'));
+    }
+
+    function renderActive() {
+      clear(activeBox);
+      var a = DL.active;
+      if (!a) { activeBox.appendChild(h('div', { class: 'd' }, 'No hay descargas en curso. Usa el botón del reproductor o Alt + D.')); return; }
+      activeBox.appendChild(h('div', { class: 'row nb' }, [
+        h('div', { class: 'lbl grow' }, [
+          h('div', { class: 't clip' }, a.title || 'Obteniendo información…'),
+          h('div', { class: 'd' }, (a.status || '') + (a.indeterminate ? '…' : a.pct ? ' ' + a.pct + '%' : ''))
+        ]),
+        btn('Cancelar', function () { DL.cancel(); }, 'danger')
+      ]));
+      activeBox.appendChild(bar(a.pct, a.indeterminate));
+    }
+
+    function renderFiles() {
+      clear(filesBox);
+      if (!info) { filesBox.appendChild(h('div', { class: 'd' }, 'Cargando…')); return; }
+      var complete = info.files.filter(function (f) { return !f.partial; }).length;
+      var partials = info.files.length - complete;
+      filesBox.appendChild(h('div', { class: 'row nb' }, [
+        h('div', { class: 'd' }, complete + (complete === 1 ? ' archivo' : ' archivos') +
+          (partials ? ' + ' + partials + ' incompleto' + (partials === 1 ? '' : 's') : '') + ' · ' + info.dir),
+        btn('Abrir carpeta', function () { window.pctube.send('openDownloads'); })
+      ]));
+      if (!info.files.length) { filesBox.appendChild(h('div', { class: 'd pad' }, 'Aún no has descargado nada.')); return; }
+      info.files.forEach(function (f) {
+        var del = btn('Eliminar', function () {
+          if (del.dataset.armed) {
+            window.pctube.call('fileAction', { action: 'delete', name: f.name }).then(load).catch(function (e) {
+              if (window.pctube.toast) window.pctube.toast('No se pudo eliminar: ' + e.message, 5000);
+            });
+            return;
+          }
+          del.dataset.armed = '1';
+          del.textContent = '¿Seguro?';
+          del.classList.add('danger');
+          setTimeout(function () { if (del.isConnected) { delete del.dataset.armed; del.textContent = 'Eliminar'; del.classList.remove('danger'); } }, 3000);
+        });
+        filesBox.appendChild(h('div', { class: 'file' }, [
+          h('div', { class: 'lbl grow' }, [
+            h('div', { class: 't clip', title: f.name }, f.name),
+            h('div', { class: 'd' + (f.partial ? ' warn' : '') },
+              (f.partial ? 'Incompleta (descarga interrumpida; se reanuda si vuelves a descargar) · ' : '') +
+              fmtSize(f.size) + ' · ' + fmtDate(f.modified))
+          ]),
+          f.partial ? null : btn('Abrir', function () { window.pctube.call('fileAction', { action: 'open', name: f.name }); }),
+          btn('Mostrar', function () { window.pctube.call('fileAction', { action: 'show', name: f.name }); }),
+          del
+        ]));
+      });
+    }
+
+    function load() {
+      window.pctube.call('downloadsInfo').then(function (i) {
+        info = i;
+        renderTools();
+        renderFiles();
+        // The version needs to start yt-dlp, which is slow: fill it in when it arrives.
+        if (i.ytdlp.installed) {
+          window.pctube.call('ytdlpVersion').then(function (v) {
+            if (info === i) { i.ytdlp.version = v; renderTools(); }
+          }).catch(function () {});
+        }
+      }).catch(function () {
+        clear(toolsBox);
+        toolsBox.appendChild(h('div', { class: 'd err' }, 'No se pudo leer el estado de las descargas.'));
+      });
+    }
+
+    renderTools(); renderActive(); renderFiles(); load();
+
+    return {
+      root: root,
+      onEvent: function (ev) {
+        switch (ev.kind) {
+          case 'start': case 'title': case 'status': case 'progress': case 'phase': renderActive(); break;
+          case 'done': case 'cancelled': case 'error': renderActive(); load(); break;
+          case 'tool': renderTools(); if (ev.state !== 'working') load(); break;
+        }
+      }
+    };
+  }
+
+  window.pctube.dl.on(function (ev) { if (host && dlView) dlView.onEvent(ev); });
+
+  // ---------- Sections ----------
+  var SECTIONS = [
+    {
+      id: 'ads', title: 'Bloqueo de anuncios', build: function () {
+        return [
+          toggle('enableAdBlock', 'Bloquear anuncios', 'Elimina los anuncios de vídeo y los de los feeds. Afecta a los siguientes vídeos que cargues.'),
+          toggle('suppressStillWatching', 'Evitar «¿Sigues ahí?»', 'Impide que YouTube pause la reproducción por inactividad.')
+        ];
+      }
+    },
+    {
+      id: 'sb', title: 'SponsorBlock', build: function () {
+        return [
+          toggle('enableSponsorBlock', 'Activar SponsorBlock', 'Usa los segmentos de la comunidad (sponsor.ajay.app).'),
+          toggle('enableSponsorBlockToasts', 'Avisos al saltar', 'Muestra un mensaje breve cuando se salta un segmento.'),
+          h('div', { class: 'sub' }, 'Qué hacer con cada categoría'),
+          sbModes()
+        ];
+      }
+    },
+    {
+      id: 'da', title: 'DeArrow', build: function () {
+        return [
+          toggle('enableDeArrow', 'Títulos de la comunidad', 'Reemplaza títulos clickbait por los propuestos en DeArrow.'),
+          toggle('deArrowFormatTitles', 'Corregir títulos en MAYÚSCULAS', 'En los vídeos sin título de la comunidad, convierte «TÍTULOS GRITADOS» a mayúscula inicial. Requiere activar los títulos de la comunidad.'),
+          toggle('enableDeArrowThumbnails', 'Miniaturas de la comunidad', 'Reemplaza las miniaturas por un fotograma del vídeo elegido en DeArrow. Solo hay datos para una parte de los vídeos.')
+        ];
+      }
+    },
+    {
+      id: 'dlhub', title: 'Descargas', build: function () {
+        dlView = downloadsView();
+        return [dlView.root];
+      }
+    },
+    {
+      id: 'dl', title: 'Opciones de descarga', build: function () {
+        return [
+          toggle('enableDownload', 'Botón de descarga', 'Añade un botón al reproductor (y el atajo Alt + D) para descargar el vídeo que estás viendo.'),
+          toggle('downloadAsk', 'Elegir formato y calidad antes de descargar', 'Muestra un diálogo con las resoluciones y formatos reales del vídeo. Si lo desactivas, se usan directamente las opciones de abajo.'),
+          h('div', { class: 'sub' }, 'Valores por defecto (también se actualizan al elegir en el diálogo)'),
+          choice('downloadMode', 'Qué descargar', null, [
+            { value: 'video', label: 'Vídeo' },
+            { value: 'audio', label: 'Solo audio' }
+          ]),
+          choice('downloadMaxHeight', 'Calidad máxima de vídeo', 'Con ffmpeg se une el mejor vídeo y audio; sin él se descarga un solo archivo de calidad media. Instálalo en la sección Descargas.', [
+            { value: 0, label: 'La mejor disponible' },
+            { value: 2160, label: '4K (2160p)' },
+            { value: 1440, label: '1440p' },
+            { value: 1080, label: '1080p' },
+            { value: 720, label: '720p' },
+            { value: 480, label: '480p' }
+          ], true),
+          choice('downloadContainer', 'Formato de vídeo', 'Requiere ffmpeg.', [
+            { value: 'mp4', label: 'MP4 (el más compatible)' },
+            { value: 'mkv', label: 'MKV' },
+            { value: 'webm', label: 'WebM' }
+          ]),
+          choice('downloadAudioFormat', 'Formato de audio', 'Requiere ffmpeg (sin él se guarda M4A).', [
+            { value: 'mp3', label: 'MP3' },
+            { value: 'm4a', label: 'M4A (AAC)' },
+            { value: 'opus', label: 'Opus' },
+            { value: 'flac', label: 'FLAC' },
+            { value: 'wav', label: 'WAV' }
+          ]),
+          choice('downloadAudioQuality', 'Calidad del MP3', null, [
+            { value: '320K', label: '320 kbps' },
+            { value: '256K', label: '256 kbps' },
+            { value: '192K', label: '192 kbps' },
+            { value: '128K', label: '128 kbps' }
+          ]),
+          h('div', { class: 'sub' }, 'Al guardar el archivo (requieren ffmpeg)'),
+          toggle('downloadEmbedMeta', 'Incluir título, canal y carátula', 'Escribe los datos del vídeo dentro del archivo para que los reproductores los muestren. La carátula solo en MP4, MKV, MP3 y M4A.'),
+          toggle('downloadRemoveSponsors', 'Quitar patrocinios del archivo', 'Corta del archivo las categorías de SponsorBlock que tengas en «Saltar automáticamente» (Ajustes → SponsorBlock). La duración final será menor.'),
+          action('Carpeta de descargas', 'Descargas\\PC Tube', 'Abrir carpeta', function () {
+            window.pctube.send('openDownloads');
+          })
+        ];
+      }
+    },
+    {
+      id: 'play', title: 'Reproducción', build: function () {
+        return [
+          choice('preferredQuality', 'Calidad de vídeo preferida', 'Al empezar un vídeo se pide esta resolución (o la más cercana por debajo que tenga). «Automática» deja que YouTube decida según tu conexión.', [
+            { value: 'auto', label: 'Automática' },
+            { value: '2160', label: '4K (2160p)' },
+            { value: '1440', label: '1440p' },
+            { value: '1080', label: '1080p' },
+            { value: '720', label: '720p' },
+            { value: '480', label: '480p' },
+            { value: '360', label: '360p' }
+          ]),
+          choice('preferredCodec', 'Códec de vídeo', 'Afecta al consumo de CPU y a los vídeos que se cargan a partir de ahora. AV1 gasta más si tu equipo no lo acelera por hardware.', [
+            { value: 'any', label: 'Cualquiera (lo que elija YouTube)' },
+            { value: 'noav1', label: 'Evitar AV1 (recomendado)' },
+            { value: 'h264', label: 'Solo H.264 (máximo 1080p)' }
+          ]),
+          toggle('rememberSpeed', 'Recordar la velocidad', 'Mantiene la velocidad de reproducción en los siguientes vídeos. Atajos: Alt + ] más rápido (hasta ×4), Alt + [ más lento, Alt + L repetir el vídeo, Alt + K repetir un tramo (inicio, final, quitar).'),
+          range('volumeBoost', 'Volumen máximo', 'Por encima del 100 % amplifica el audio de vídeos con poco volumen, con un limitador para evitar distorsión. Se multiplica por el volumen de YouTube.', 100, 300, 25, '%')
+        ];
+      }
+    },
+    {
+      id: 'general', title: 'General', build: function () {
+        return [
+          choice('closeAction', 'Al pulsar cerrar (✕)', 'Si se oculta en la bandeja, la música sigue sonando y puedes controlarla con clic derecho en el icono junto al reloj (reproducir/pausar, siguiente y cerrar).', [
+            { value: 'tray', label: 'Ocultar en la bandeja del sistema' },
+            { value: 'exit', label: 'Cerrar la aplicación' }
+          ]),
+          toggle('autostart', 'Iniciar con Windows', 'Abre PC Tube al iniciar sesión, directamente en la bandeja y sin ventana. Registra el .exe desde el que lo actives: actívalo con la versión que vayas a usar.'),
+          toggle('globalHotkeys', 'Atajos globales', 'Funcionan desde cualquier aplicación, aunque PC Tube esté en la bandeja: Ctrl + Alt + Espacio reproducir/pausar, Ctrl + Alt + → siguiente, Ctrl + Alt + ← anterior.'),
+          toggle('alwaysOnTop', 'Mantener siempre visible', 'La ventana queda por encima de las demás. También con la chincheta de la barra superior.'),
+          h('div', { class: 'sub' }, 'Copia de seguridad'),
+          action('Exportar ajustes', 'Guarda tus ajustes en un archivo .json (no incluye tu sesión de YouTube).', 'Exportar…', function () {
+            window.pctube.call('exportConfig').then(function (path) {
+              if (path && window.pctube.toast) window.pctube.toast('Ajustes exportados: ' + path, 6000);
+            }).catch(function (e) {
+              if (window.pctube.toast) window.pctube.toast('No se pudo exportar: ' + e.message, 6000);
+            });
+          }),
+          action('Importar ajustes', 'Carga un archivo exportado antes. Solo se aplican ajustes reconocidos; la página se recarga al terminar.', 'Importar…', function () {
+            window.pctube.call('importConfig').then(function (r) {
+              if (!r) return;               // dialog cancelled
+              window.pctube.config._replace(r.config);   // so the reload below sees the new values
+              if (window.pctube.toast) window.pctube.toast('Se aplicaron ' + r.applied + ' ajustes. Recargando…', 3000);
+              setTimeout(function () { location.reload(); }, 1200);
+            }).catch(function (e) {
+              if (window.pctube.toast) window.pctube.toast('No se pudo importar: ' + e.message, 6000);
+            });
+          })
+        ];
+      }
+    },
+    {
+      id: 'misc', title: 'Varios', build: function () {
+        return [
+          toggle('enableMini', 'Mini-reproductor', 'Botón en el reproductor y atajo Alt + M: encoge la ventana a una esquina, siempre visible, con el reproductor completo. Esc o el botón de la barra vuelven a la ventana normal.'),
+          choice('miniCloseAction', 'Al cerrar el mini-reproductor (✕)', 'Volver a la ventana completa sigue reproduciendo. Pausar detiene el vídeo y cierra la ventana según la opción de General (bandeja o salir).', [
+            { value: 'restore', label: 'Volver a la ventana completa' },
+            { value: 'pause', label: 'Pausar el vídeo y cerrar' }
+          ]),
+          toggle('hideShorts', 'Ocultar Shorts', 'Quita los Shorts de feeds, búsquedas, canales y el menú lateral.'),
+          toggle('hideEndScreenCards', 'Ocultar tarjetas del final', 'Quita las tarjetas y vídeos sugeridos que aparecen sobre el reproductor.'),
+          toggle('hidePaidPromotionOverlay', 'Ocultar aviso de promoción de pago', 'Quita el cartel «Incluye promoción de pago».')
+        ];
+      }
+    },
+    {
+      id: 'ui', title: 'Interfaz', build: function () {
+        return [
+          toggle('hideWatchedVideos', 'Ocultar vídeos ya vistos', 'Oculta los vídeos que has visto más allá del umbral indicado.'),
+          range('hideWatchedThreshold', 'Umbral de visto', 'Se ocultan los vídeos vistos al menos este porcentaje.', 5, 100, 5, '%'),
+          multi('hideWatchedPages', 'Dónde ocultarlos', null, [
+            { value: 'home', label: 'Inicio' },
+            { value: 'subscriptions', label: 'Suscripciones' },
+            { value: 'search', label: 'Búsqueda' },
+            { value: 'watch', label: 'Relacionados' }
+          ])
+        ];
+      }
+    },
+    {
+      id: 'about', title: 'Acerca de', build: function () {
+        return [
+          h('div', { class: 'about' }, [
+            h('p', {}, 'PC Tube: envoltorio de YouTube para Windows con WebView2, sin Electron.'),
+            h('p', {}, 'Adblock, SponsorBlock y DeArrow basados en TizenTube (GPL-3.0).'),
+            h('p', {}, 'Los ajustes se guardan en %LOCALAPPDATA%\\PcTube\\config.json.'),
+            h('p', {}, 'Atajos: Ctrl + , abre este panel · Alt + M mini-reproductor · Alt + D descargar')
+          ])
+        ];
+      }
+    }
+  ];
+
+  // ---------- Panel ----------
+  var CSS = [
+    ':host{all:initial;--bg:var(--yt-spec-base-background,#0f0f0f);--raised:var(--yt-spec-raised-background,#212121);',
+    '--fg:var(--yt-spec-text-primary,#f1f1f1);--fg2:var(--yt-spec-text-secondary,#aaa);',
+    '--line:var(--yt-spec-10-percent-layer,rgba(255,255,255,.12));--hover:var(--yt-spec-badge-chip-background,rgba(255,255,255,.1));--accent:#3ea6ff;',
+    'font:14px/1.4 Roboto,Arial,sans-serif;color:var(--fg)}',
+    '.backdrop{position:fixed;inset:0;z-index:2147483645;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center}',
+    '.panel{width:min(820px,94vw);height:min(600px,88vh);background:var(--raised);border-radius:14px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 12px 48px rgba(0,0,0,.5)}',
+    '.head{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--line)}',
+    '.head h1{margin:0;font-size:18px;font-weight:500}',
+    '.x{background:none;border:0;color:var(--fg);font-size:22px;cursor:pointer;width:36px;height:36px;border-radius:50%}',
+    '.x:hover,.nav button:hover{background:var(--hover)}',
+    '.body{flex:1;display:flex;min-height:0}',
+    '.nav{width:210px;padding:10px;border-right:1px solid var(--line);overflow:auto;display:flex;flex-direction:column;gap:2px}',
+    '.nav button{text-align:left;background:none;border:0;color:var(--fg);padding:10px 12px;border-radius:8px;font:inherit;cursor:pointer}',
+    '.nav button.on{background:var(--hover);font-weight:500}',
+    '.pane{flex:1;padding:8px 24px 24px;overflow:auto}',
+    '.pane h2{font-size:16px;font-weight:500;margin:16px 0 4px}',
+    '.row{display:flex;align-items:center;justify-content:space-between;gap:20px;padding:14px 0;border-bottom:1px solid var(--line)}',
+    '.row.col{flex-direction:column;align-items:flex-start;gap:10px}',
+    '.lbl .t{font-size:14px;display:flex;align-items:center;gap:8px}.lbl .d{color:var(--fg2);font-size:12px;margin-top:2px}',
+    '.dot{width:10px;height:10px;border-radius:50%;display:inline-block}',
+    '.sub{color:var(--fg2);font-size:12px;text-transform:uppercase;letter-spacing:.06em;margin:18px 0 0}',
+    '.switch{flex:none;width:40px;height:22px;border-radius:11px;border:0;background:#717171;position:relative;cursor:pointer;transition:background .15s}',
+    '.switch::after{content:"";position:absolute;top:3px;left:3px;width:16px;height:16px;border-radius:50%;background:#fff;transition:transform .15s}',
+    '.switch[aria-checked=true]{background:var(--accent)}.switch[aria-checked=true]::after{transform:translateX(18px)}',
+    'select{background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:7px 10px;font:inherit}',
+    '.rng{display:flex;align-items:center;gap:12px}.rng input{width:180px;accent-color:var(--accent)}.val{min-width:44px;text-align:right;color:var(--fg2)}',
+    '.btn{background:var(--hover);color:var(--fg);border:0;border-radius:18px;padding:8px 16px;font:inherit;cursor:pointer;white-space:nowrap}.btn:hover{filter:brightness(1.3)}',
+    '.btn.sm{padding:5px 12px;font-size:12px}.btn.danger{background:#c4302b;color:#fff}',
+    '.card{border:1px solid var(--line);border-radius:10px;padding:2px 14px 12px;margin-top:8px}',
+    '.card>.d{margin-top:10px}',
+    '.row.tool{align-items:flex-start}.row.nb{border-bottom:0;padding:10px 0}.card .row.tool:first-child{border-top:0}',
+    '.d{color:var(--fg2);font-size:12px;margin-top:2px}.d.err{color:#ff6b6b}.d.warn{color:#e8b64c}.d.ok{color:#4cc38a}.d.note{margin-top:12px}.d.pad{padding:14px 0}',
+    '.acts{display:flex;gap:8px;flex:none}.prog{width:200px;flex:none}',
+    '.bar{height:6px;border-radius:3px;background:var(--hover);overflow:hidden;margin-top:6px}.fill{height:100%;width:0;background:var(--accent);transition:width .2s}',
+    '.bar.ind{position:relative}.bar.ind .fill{position:absolute;width:35% !important;animation:slide 1.1s ease-in-out infinite}',
+    '@keyframes slide{0%{left:-35%}100%{left:100%}}',
+    '.grow{flex:1;min-width:0}.clip{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block}',
+    '.file{display:flex;align-items:center;gap:8px;padding:10px 0;border-bottom:1px solid var(--line)}',
+    '.chips{display:flex;flex-wrap:wrap;gap:8px}',
+    '.chip{display:flex;align-items:center;gap:6px;padding:6px 12px;border-radius:16px;background:var(--hover);cursor:pointer}',
+    '.about p{color:var(--fg2);margin:12px 0}'
+  ].join('');
+
+  var host = null, root = null, pane = null, navBtns = [], activeId = 'ads';
+
+  function select(id) {
+    activeId = id;
+    var sec = SECTIONS.filter(function (s) { return s.id === id; })[0];
+    dlView = null;
+    navBtns.forEach(function (b) { b.classList.toggle('on', b.dataset.id === id); });
+    while (pane.firstChild) pane.removeChild(pane.firstChild);
+    pane.appendChild(h('h2', {}, sec.title));
+    sec.build().forEach(function (n) { pane.appendChild(n); });
+  }
+
+  function close() {
+    if (host) { host.remove(); host = null; }
+    dlView = null;
+  }
+
+  // open() toggles the panel; open('dlhub') opens it (or switches) on that section.
+  function open(sectionId) {
+    if (host) {
+      if (!sectionId) return close();
+      return select(sectionId);
+    }
+    if (sectionId) activeId = sectionId;
+    host = h('div', { id: 'pctube-settings' });
+    // Keep YouTube's keyboard shortcuts (space, k, f, ...) from firing while typing in the panel.
+    ['keydown', 'keyup', 'keypress'].forEach(function (ev) {
+      host.addEventListener(ev, function (e) {
+        e.stopPropagation();
+        if (ev === 'keydown' && e.key === 'Escape') close();
+      });
+    });
+    root = host.attachShadow({ mode: 'open' });
+    var style = document.createElement('style');
+    style.textContent = CSS;
+    pane = h('div', { class: 'pane' });
+    var nav = h('div', { class: 'nav' });
+    navBtns = SECTIONS.map(function (s) {
+      var b = h('button', { type: 'button', 'data-id': s.id, onclick: function () { select(s.id); } }, s.title);
+      nav.appendChild(b);
+      return b;
+    });
+    var backdrop = h('div', { class: 'backdrop', onclick: function (e) { if (e.target === backdrop) close(); } }, [
+      h('div', { class: 'panel', role: 'dialog', 'aria-label': 'Ajustes de PC Tube' }, [
+        h('div', { class: 'head' }, [h('h1', {}, 'PC Tube · Ajustes'), h('button', { class: 'x', type: 'button', 'aria-label': 'Cerrar', onclick: close }, '×')]),
+        h('div', { class: 'body' }, [nav, pane])
+      ])
+    ]);
+    root.appendChild(style);
+    root.appendChild(backdrop);
+    document.documentElement.appendChild(host);
+    select(activeId);
+  }
+
+  window.pctube.openSettings = open;
+
+  // Ctrl + ,
+  window.addEventListener('keydown', function (e) {
+    if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key === ',') { e.preventDefault(); open(); }
+  }, true);
+
+  // ---------- Gear button in the YouTube top bar ----------
+  var GEAR = 'M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.488.488 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.484.484 0 0 0-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z';
+
+  var DL_ICON = 'M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z';
+
+  function mastheadButton(id, title, pathData, onclick) {
+    var ns = 'http://www.w3.org/2000/svg';
+    var svg = document.createElementNS(ns, 'svg');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('width', '24');
+    svg.setAttribute('height', '24');
+    var p = document.createElementNS(ns, 'path');
+    p.setAttribute('d', pathData);
+    p.setAttribute('fill', 'currentColor');
+    svg.appendChild(p);
+    var b = h('button', {
+      id: id, type: 'button', title: title, 'aria-label': title,
+      style: 'width:40px;height:40px;border:0;border-radius:50%;background:transparent;cursor:pointer;' +
+        'color:var(--yt-spec-text-primary,#f1f1f1);display:flex;align-items:center;justify-content:center;margin-right:4px;',
+      onclick: onclick
+    }, svg);
+    b.addEventListener('mouseenter', function () { b.style.background = 'var(--yt-spec-badge-chip-background,rgba(255,255,255,.1))'; });
+    b.addEventListener('mouseleave', function () { b.style.background = 'transparent'; });
+    return b;
+  }
+
+  setInterval(function () {
+    var buttons = document.querySelector('ytd-masthead #end #buttons');
+    if (!buttons) return;
+    if (!document.getElementById('pctube-gear')) {
+      buttons.insertBefore(mastheadButton('pctube-gear', 'Ajustes de PC Tube (Ctrl+,)', GEAR, function () { open(); }), buttons.firstChild);
+    }
+    if (!document.getElementById('pctube-dlhub')) {
+      buttons.insertBefore(mastheadButton('pctube-dlhub', 'Descargas', DL_ICON, function () { open('dlhub'); }), document.getElementById('pctube-gear'));
+    }
+  }, 1500);
+})();
