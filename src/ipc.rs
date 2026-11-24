@@ -55,6 +55,10 @@ pub enum WinCmd {
     AlwaysOnTop(bool),
     /// Mini-player: small always-on-top window in the corner (and back).
     Mini(bool),
+    /// Briefly lower WebView2's memory level to make it trim caches (then back to normal).
+    TrimMemory,
+    /// Internal: end of a TrimMemory.
+    TrimDone,
     /// Page zoom (1.0 = 100 %).
     Zoom(f64),
     /// Global shortcuts on/off.
@@ -97,6 +101,7 @@ fn parse_win_cmd(cmd: &str, value: &Option<Value>) -> Option<WinCmd> {
         "alwaysOnTop" => WinCmd::AlwaysOnTop(value.as_ref().and_then(Value::as_bool).unwrap_or(false)),
         "hotkeys" => WinCmd::Hotkeys(value.as_ref().and_then(Value::as_bool).unwrap_or(false)),
         "zoom" => WinCmd::Zoom(value.as_ref().and_then(Value::as_f64).unwrap_or(1.0).clamp(0.5, 2.0)),
+        "trimMemory" => WinCmd::TrimMemory,
         "mini" => WinCmd::Mini(value.as_ref().and_then(Value::as_bool).unwrap_or(false)),
         "resize" =>WinCmd::Resize(match value.as_ref().and_then(Value::as_str)? {
             "n" => D::North,

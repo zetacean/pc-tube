@@ -58,6 +58,7 @@ pub fn defaults() -> Value {
         "captionsLang": "es",
         "captionsAuto": true,       // accept auto-generated captions when there are no manual ones
         "captionsTranslate": false, // otherwise translate the first available captions into captionsLang
+        "memorySaver": "auto",      // auto | hidden | off: trim memory when hidden (and now and then while in view)
         "globalHotkeys": true,     // Ctrl+Alt+Space / Right / Left work from any app
         "alwaysOnTop": false,      // keep the window above the others
 

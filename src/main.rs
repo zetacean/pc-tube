@@ -134,9 +134,14 @@ fn main() {
     let boot_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_millis());
-    let script = format!(
-        "window.__PCTUBE_CONFIG__ = {initial_cfg};\nwindow.__PCTUBE_BOOT__ = {boot_ms};\n{}",
+    // PCTUBE_NO_SCRIPTS (debug builds): load the site without any of our scripts, to measure them.
+    let scripts = if cfg!(debug_assertions) && std::env::var_os("PCTUBE_NO_SCRIPTS").is_some() {
+        String::new()
+    } else {
         init_script()
+    };
+    let script = format!(
+        "window.__PCTUBE_CONFIG__ = {initial_cfg};\nwindow.__PCTUBE_BOOT__ = {boot_ms};\n{scripts}"
     );
 
     let ipc_cfg = cfg.clone();
@@ -151,7 +156,10 @@ fn main() {
         use wry::WebViewBuilderExtWindows;
         match std::env::var("PCTUBE_DEBUG_PORT") {
             Ok(port) => builder.with_additional_browser_args(format!(
-                "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --remote-debugging-port={port}"
+                // PCTUBE_BROWSER_ARGS (tests only): try other WebView2 flags, e.g. for memory
+                "{} --remote-debugging-port={port}",
+                std::env::var("PCTUBE_BROWSER_ARGS")
+                    .unwrap_or_else(|_| "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection".into())
             )),
             Err(_) => builder,
         }
@@ -230,6 +238,23 @@ fn main() {
     };
     download::set_limit(cfg.lock().unwrap()["downloadParallel"].as_u64().unwrap_or(2) as usize);
     download::restore_queue(); // what was left unfinished last time (nothing starts by itself)
+
+    let mut low_memory = false;
+
+    // Memory saver ("auto"): while the window is in view, trim WebView2's caches now and then
+    // (the first time a minute after start, once the page has settled, then every five minutes).
+    {
+        let (cfg, proxy) = (cfg.clone(), proxy.clone());
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_secs(60));
+            loop {
+                if cfg.lock().unwrap()["memorySaver"].as_str().unwrap_or("auto") == "auto" {
+                    let _ = proxy.send_event(ipc::Out::Window(ipc::WinCmd::TrimMemory));
+                }
+                std::thread::sleep(std::time::Duration::from_secs(300));
+            }
+        });
+    }
 
     // Geometry to go back to when the mini-player is closed: (position, size, maximized).
     let mut mini: Option<(tao::dpi::PhysicalPosition<i32>, tao::dpi::PhysicalSize<u32>, bool)> = None;
@@ -330,6 +355,21 @@ fn main() {
                             let _ = webview.zoom(zoom);
                         }
                     }
+                    WinCmd::TrimMemory => {
+                        if !low_memory {
+                            let _ = wry::WebViewExtWindows::set_memory_usage_level(&webview, wry::MemoryUsageLevel::Low);
+                            let p = proxy.clone();
+                            std::thread::spawn(move || {
+                                std::thread::sleep(std::time::Duration::from_secs(2));
+                                let _ = p.send_event(ipc::Out::Window(ipc::WinCmd::TrimDone));
+                            });
+                        }
+                    }
+                    WinCmd::TrimDone => {
+                        if !low_memory {
+                            let _ = wry::WebViewExtWindows::set_memory_usage_level(&webview, wry::MemoryUsageLevel::Normal);
+                        }
+                    }
                     WinCmd::Mini(true) => {}
                     WinCmd::Zoom(z) => {
                         zoom = z;
@@ -371,6 +411,17 @@ fn main() {
                 } else {
                     download::shutdown();
                     *control_flow = ControlFlow::Exit;
+                }
+            }
+            // Out of sight (hidden in the tray or minimized): ask WebView2 to trim its memory; back to
+            // normal as soon as the window is shown again.
+            Event::MainEventsCleared => {
+                let saver = cfg.lock().unwrap()["memorySaver"].as_str().unwrap_or("auto").to_string();
+                let hidden = saver != "off" && (!window.is_visible() || window.is_minimized());
+                if hidden != low_memory {
+                    low_memory = hidden;
+                    let level = if hidden { wry::MemoryUsageLevel::Low } else { wry::MemoryUsageLevel::Normal };
+                    let _ = wry::WebViewExtWindows::set_memory_usage_level(&webview, level);
                 }
             }
             _ => {}

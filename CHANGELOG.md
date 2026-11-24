@@ -3,6 +3,11 @@
 Formato: [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/). Las notas de cada versión
 se publican tal cual en su *release* de GitHub (el workflow toma la sección de la versión).
 
+## [0.5.1]
+
+### Añadido
+- **Ahorro de memoria** (Ajustes → General, activado por defecto): cuando la ventana está oculta en la bandeja o minimizada, PC Tube le pide a WebView2 que libere memoria (de unos 480 MB a unos 240 MB con música sonando, y a unos 60-100 MB si está en pausa). En «Automático» también lo hace de vez en cuando mientras ves un vídeo (a partir del minuto desde que se abre y cada 5 minutos): baja de unos 500 MB a unos 320 MB sin cortes en la reproducción.
+
 ## [0.5.0]
 
 ### Añadido

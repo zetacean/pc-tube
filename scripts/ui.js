@@ -749,6 +749,11 @@
             { value: 'always', label: 'Siempre' },
             { value: 'off', label: 'Nunca' }
           ]),
+          choice('memorySaver', 'Ahorro de memoria', 'YouTube pide mucha memoria (unos 500 MB reproduciendo). Con el ahorro, PC Tube le pide a WebView2 que libere la que no necesita: siempre que la ventana esté oculta o minimizada, y en «Automático» también de vez en cuando mientras la ves (la reproducción no se corta).', [
+            { value: 'auto', label: 'Automático (recomendado)' },
+            { value: 'hidden', label: 'Solo con la ventana oculta o minimizada' },
+            { value: 'off', label: 'Desactivado' }
+          ]),
           toggle('alwaysOnTop', 'Mantener siempre visible', 'La ventana queda por encima de las demás. También con la chincheta de la barra superior.'),
           h('div', { class: 'sub' }, 'Copia de seguridad'),
           action('Exportar ajustes', 'Guarda tus ajustes en un archivo .json (no incluye tu sesión de YouTube).', 'Exportar…', function () {
