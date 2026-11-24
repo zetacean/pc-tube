@@ -9,6 +9,7 @@ on:
 
 permissions:
   contents: write
+  actions: read
 
 jobs:
   release:
@@ -30,8 +31,35 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
 
-      - name: Tests
-        run: cargo test --release
+      # CI already ran the tests for this commit when it was pushed to main: wait for it instead
+      # of running them again. Only if there is no CI run for the commit (manual run, tag on an
+      # old commit) the tests run here.
+      - name: Tests (reuse CI result)
+        id: ci
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $state = 'none'
+          $started = Get-Date
+          while (((Get-Date) - $started).TotalMinutes -lt 20) {
+            $runs = @(gh run list -R $env:GITHUB_REPOSITORY --workflow ci.yml --commit $env:GITHUB_SHA --json status,conclusion | ConvertFrom-Json)
+            if ($runs.Count -eq 0) {
+              if (((Get-Date) - $started).TotalSeconds -gt 90) { break }   # CI never started
+              Start-Sleep -Seconds 10
+              continue
+            }
+            if (@($runs | Where-Object { $_.status -ne 'completed' }).Count -gt 0) { Start-Sleep -Seconds 15; continue }
+            $state = if (@($runs | Where-Object { $_.conclusion -eq 'success' }).Count -gt 0) { 'ok' } else { 'failed' }
+            break
+          }
+          "CI for $env:GITHUB_SHA : $state"
+          "state=$state" >> $env:GITHUB_OUTPUT
+          if ($state -eq 'failed') { throw 'El CI de este commit fallo: no se publica' }
+
+      - name: Tests (only when CI did not run)
+        if: steps.ci.outputs.state == 'none'
+        run: cargo test
 
       - name: Build, zip and installer
         shell: pwsh
