@@ -244,6 +244,7 @@
         audioFormat: info.hasFfmpeg ? st.audioFormat : 'm4a',
         audioQuality: st.audioQuality,
         duration: info.duration || 0,
+        label: info.title || '',
         playlistId: st.playlist && listId ? listId : ''
       });
     }

@@ -1,6 +1,6 @@
 [package]
 name = "pc_tube"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
 license = "GPL-3.0-only"
 
@@ -22,6 +22,8 @@ windows = { version = "0.62", features = [
     "Win32_System_Com",
     "Win32_UI_Shell",
     "Win32_UI_WindowsAndMessaging",
+    "UI_Notifications",
+    "Data_Xml_Dom",
 ] }
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",

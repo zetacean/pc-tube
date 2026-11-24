@@ -33,6 +33,11 @@ struct Msg {
     remove_categories: Option<String>,
     #[serde(rename = "playlistId")]
     playlist_id: Option<String>,
+    qid: Option<u64>,
+    label: Option<String>,
+    channel: Option<String>,
+    /// Update: download and verify only, do not run the installer (test sessions).
+    dry: Option<bool>,
 }
 
 pub type Config = Arc<Mutex<Value>>;
@@ -76,6 +81,8 @@ pub enum Out {
     Tray(TrayAction),
     /// What the page is playing (title is empty when nothing is).
     NowPlaying { title: String, paused: bool },
+    /// A new video started: maybe show a Windows notification (the main loop knows if the window is in view).
+    Notify { title: String, channel: String, video_id: String },
 }
 
 fn parse_win_cmd(cmd: &str, value: &Option<Value>) -> Option<WinCmd> {
@@ -146,7 +153,7 @@ pub fn handle(body: &str, cfg: &Config, emit: impl Fn(Out) + Send + 'static) {
                 Err(e) => respond(m.id, false, Value::String(e)),
             });
         }
-        "download" => crate::download::start(
+        "download" => crate::download::enqueue(
             m.video_id.unwrap_or_default(),
             crate::download::Opts {
                 mode: m.mode.unwrap_or_default(),
@@ -159,8 +166,15 @@ pub fn handle(body: &str, cfg: &Config, emit: impl Fn(Out) + Send + 'static) {
                 remove_categories: m.remove_categories.unwrap_or_default(),
                 playlist_id: m.playlist_id.unwrap_or_default(),
             },
+            m.label.unwrap_or_default(),
+            m.qid.unwrap_or(0),
             shared_emit(&emit),
         ),
+        "cancelQueued" => crate::download::remove_queued(m.qid.unwrap_or(0), &shared_emit(&emit)),
+        "clearQueue" => crate::download::clear_queue(&shared_emit(&emit)),
+        "resumeQueue" => crate::download::resume(shared_emit(&emit)),
+        "queueInfo" => respond(m.id, true, crate::download::queue_snapshot()),
+        "hotkeyStatus" => respond(m.id, true, json!(crate::hotkeys::failed())),
         "downloadFormats" => {
             // Starts yt-dlp and waits for YouTube: slow, so off the UI thread.
             let shared = shared_emit(&emit);
@@ -229,7 +243,16 @@ pub fn handle(body: &str, cfg: &Config, emit: impl Fn(Out) + Send + 'static) {
                 Err(e) => respond(m.id, false, Value::String(e)),
             });
         }
+        "applyUpdate" => crate::update::apply(
+            shared_emit(&emit),
+            m.dry.unwrap_or(false) && config::debug_session(), // only test sessions may skip installing
+        ),
         "openRelease" => crate::update::open_release_page(),
+        "notifyNowPlaying" => (emit.lock().unwrap())(Out::Notify {
+            title: m.title.unwrap_or_default(),
+            channel: m.channel.unwrap_or_default(),
+            video_id: m.video_id.unwrap_or_default(),
+        }),
         "showWindow" => (emit.lock().unwrap())(Out::Tray(TrayAction::Show)),
         "cancelDownload" => crate::download::cancel(),
         "installYtdlp" => crate::download::install_ytdlp_task(shared_emit(&emit)),

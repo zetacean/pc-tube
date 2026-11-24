@@ -9,15 +9,17 @@
 
 use crate::{config, ipc::Out};
 use serde_json::{json, Value};
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
+    collections::VecDeque,
     fs::File,
     io::{BufRead, BufReader, Read, Write},
     os::windows::process::CommandExt,
     path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::{
-        atomic::{AtomicBool, AtomicU32, Ordering},
+        atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
         Arc, Mutex,
     },
     time::{Duration, Instant, UNIX_EPOCH},
@@ -32,10 +34,16 @@ const MEDIA_EXT: &[&str] = &[
     "mp4", "mkv", "webm", "mp3", "m4a", "opus", "ogg", "wav", "flac", "mov", "aac",
 ];
 
-static BUSY: AtomicBool = AtomicBool::new(false);
 static TOOL_BUSY: AtomicBool = AtomicBool::new(false);
 static CANCELLED: AtomicBool = AtomicBool::new(false);
 static PID: AtomicU32 = AtomicU32::new(0);
+/// True while the queue worker thread is running (a download is in progress).
+static WORKER: AtomicBool = AtomicBool::new(false);
+/// The app is quitting: the interrupted download stays in the saved queue to resume next time.
+static SHUTDOWN: AtomicBool = AtomicBool::new(false);
+static QUEUE: Mutex<VecDeque<QueueItem>> = Mutex::new(VecDeque::new());
+static ACTIVE: Mutex<Option<QueueItem>> = Mutex::new(None);
+static NEXT_QID: AtomicU64 = AtomicU64::new(1);
 
 pub type Emit = Arc<dyn Fn(Out) + Send + Sync>;
 
@@ -80,7 +88,11 @@ fn find_ffmpeg() -> (bool, Option<PathBuf>) {
 
 // ---------- events to the page ----------
 
-fn send(emit: &Emit, ev: Value) {
+/// Calls `window.pctube.<func>(ev)` in the page (func is always a literal of ours).
+pub(crate) fn send_raw(emit: &Emit, func: &str, ev: Value) {
+    emit(Out::Eval(format!("window.pctube&&window.pctube.{func}&&window.pctube.{func}({ev})")));
+}
+pub(crate) fn send(emit: &Emit, ev: Value) {
     emit(Out::Eval(format!(
         "window.pctube&&window.pctube._download&&window.pctube._download({ev})"
     )));
@@ -94,14 +106,14 @@ fn tool_ev(emit: &Emit, tool: &str, state: &str, msg: &str, pct: Option<u32>) {
 
 // ---------- network helpers ----------
 
-fn http_agent() -> ureq::Agent {
+pub(crate) fn http_agent() -> ureq::Agent {
     ureq::Agent::config_builder()
         .timeout_global(Some(Duration::from_secs(30 * 60)))
         .build()
         .into()
 }
 
-fn get_text(agent: &ureq::Agent, url: &str) -> Result<String, String> {
+pub(crate) fn get_text(agent: &ureq::Agent, url: &str) -> Result<String, String> {
     agent
         .get(url)
         .call()
@@ -112,7 +124,7 @@ fn get_text(agent: &ureq::Agent, url: &str) -> Result<String, String> {
 }
 
 /// Streams `url` into `dest`, returns the SHA-256 (hex). `on_pct` gets 0..=100 when known.
-fn download_to(
+pub(crate) fn download_to(
     agent: &ureq::Agent,
     url: &str,
     dest: &Path,
@@ -146,7 +158,7 @@ fn download_to(
     Ok(hasher.finalize().iter().map(|b| format!("{b:02x}")).collect())
 }
 
-fn expected_hash(sums: &str, file: &str) -> Option<String> {
+pub(crate) fn expected_hash(sums: &str, file: &str) -> Option<String> {
     sums.lines().find_map(|l| {
         let mut p = l.split_whitespace();
         let hash = p.next()?;
@@ -341,7 +353,8 @@ pub fn info() -> Value {
             "source": if !ff_ok { Value::Null } else if ff_dir.is_some() { json!("app") } else { json!("system") },
         },
         "files": files,
-        "busy": BUSY.load(Ordering::SeqCst),
+        "busy": WORKER.load(Ordering::SeqCst),
+        "queue": queue_snapshot(),
     })
 }
 
@@ -364,7 +377,7 @@ pub fn auto_update_in_background() {
             .ok()
             .and_then(|t| t.elapsed().ok())
             .is_some_and(|age| age < week);
-        if fresh || BUSY.load(Ordering::SeqCst) {
+        if fresh || WORKER.load(Ordering::SeqCst) {
             return;
         }
         let ok = Command::new(&exe)
@@ -415,7 +428,8 @@ fn valid_video_id(id: &str) -> bool {
 
 /// What the user picked in the download dialog. Every string is checked against a whitelist in
 /// `Opts::sanitized` before it can reach yt-dlp's command line.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Opts {
     pub mode: String,          // "video" | "audio"
     pub max_height: u32,       // 0 = best
@@ -770,6 +784,8 @@ fn job(video_id: &str, o: &Opts, emit: &Emit) -> Result<Option<String>, String> 
     match run(&exe, &args, o, has_ffmpeg, emit) {
         Ok(f) => Ok(f),
         Err(_) if CANCELLED.load(Ordering::SeqCst) => Err("cancelada".into()),
+        // Test sessions never update the tool (they only probe the queue with made-up ids).
+        Err(first) if config::debug_session() => Err(first),
         Err(first) => {
             // YouTube changes break yt-dlp regularly: update it and retry once.
             status(emit, "Actualizando yt-dlp y reintentando…");
@@ -787,25 +803,160 @@ fn job(video_id: &str, o: &Opts, emit: &Emit) -> Result<Option<String>, String> 
     }
 }
 
-pub fn start(video_id: String, opts: Opts, emit: Emit) {
+// ---------- queue ----------
+
+/// One download waiting in the queue (or running). Saved to queue.json so that what was left
+/// when the app closed can be resumed.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QueueItem {
+    pub qid: u64,
+    pub video_id: String,
+    pub label: String,
+    pub opts: Opts,
+}
+
+fn queue_path() -> PathBuf {
+    config::data_dir().join(if config::debug_session() { "queue-debug.json" } else { "queue.json" })
+}
+
+/// Active download first, then the waiting ones.
+fn all_items() -> Vec<QueueItem> {
+    let mut v: Vec<QueueItem> = ACTIVE.lock().unwrap().iter().cloned().collect();
+    v.extend(QUEUE.lock().unwrap().iter().cloned());
+    v
+}
+
+fn persist_queue() {
+    let items = all_items();
+    if items.is_empty() {
+        let _ = std::fs::remove_file(queue_path());
+    } else if let Ok(s) = serde_json::to_string(&items) {
+        let _ = std::fs::write(queue_path(), s);
+    }
+}
+
+/// Waiting items as JSON for the page: [{qid, videoId, label, opts}].
+pub fn queue_snapshot() -> Value {
+    let waiting: Vec<Value> = QUEUE
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|i| json!({ "qid": i.qid, "videoId": i.video_id, "label": i.label, "opts": i.opts }))
+        .collect();
+    json!({
+        "items": waiting,
+        "running": WORKER.load(Ordering::SeqCst),
+        "active": ACTIVE.lock().unwrap().as_ref().map(|i| i.qid),
+    })
+}
+
+fn send_queue(emit: &Emit) {
+    send(emit, json!({ "kind": "queue", "queue": queue_snapshot() }));
+}
+
+/// Loads what was left in the queue last time. Nothing starts by itself: the page shows it and
+/// "Reanudar" (or the next download) starts it.
+pub fn restore_queue() {
+    let Ok(text) = std::fs::read_to_string(queue_path()) else { return };
+    let Ok(items) = serde_json::from_str::<Vec<QueueItem>>(&text) else { return };
+    let mut q = QUEUE.lock().unwrap();
+    for mut i in items {
+        if !valid_video_id(&i.video_id) {
+            continue;
+        }
+        i.opts = i.opts.sanitized();
+        i.label.truncate(200);
+        NEXT_QID.fetch_max(i.qid + 1, Ordering::SeqCst);
+        q.push_back(i);
+    }
+}
+
+/// Queues a download and starts the worker if it is idle. `qid` is chosen by the page so that
+/// it can follow the item (0 = pick one).
+pub fn enqueue(video_id: String, opts: Opts, label: String, qid: u64, emit: Emit) {
     if !valid_video_id(&video_id) {
         status(&emit, "No se reconoció el vídeo");
         return;
     }
-    if BUSY.swap(true, Ordering::SeqCst) {
-        status(&emit, "Ya hay una descarga en curso");
+    let qid = if qid == 0 { NEXT_QID.fetch_add(1, Ordering::SeqCst) } else { qid };
+    NEXT_QID.fetch_max(qid + 1, Ordering::SeqCst);
+    let label: String = label.chars().filter(|c| !c.is_control()).take(200).collect();
+    QUEUE.lock().unwrap().push_back(QueueItem { qid, video_id, label, opts: opts.sanitized() });
+    persist_queue();
+    send_queue(&emit);
+    ensure_worker(emit);
+}
+
+/// Starts the worker unless it is already running.
+pub fn ensure_worker(emit: Emit) {
+    if WORKER.swap(true, Ordering::SeqCst) {
         return;
     }
-    CANCELLED.store(false, Ordering::SeqCst);
-    let opts = opts.sanitized();
     std::thread::spawn(move || {
-        match job(&video_id, &opts, &emit) {
-            Ok(file) => send(&emit, json!({ "kind": "done", "file": file })),
-            Err(e) if e == "cancelada" => send(&emit, json!({ "kind": "cancelled" })),
-            Err(e) => send(&emit, json!({ "kind": "error", "msg": e })),
+        loop {
+            // Decide "empty" and clear WORKER under the queue lock, so an item pushed right now
+            // is either seen here or finds WORKER false and starts a new worker.
+            let item = {
+                let mut q = QUEUE.lock().unwrap();
+                match q.pop_front() {
+                    Some(i) => i,
+                    None => {
+                        WORKER.store(false, Ordering::SeqCst);
+                        break;
+                    }
+                }
+            };
+            *ACTIVE.lock().unwrap() = Some(item.clone());
+            CANCELLED.store(false, Ordering::SeqCst);
+            send(&emit, json!({ "kind": "start", "qid": item.qid, "label": item.label, "videoId": item.video_id, "opts": item.opts }));
+            send_queue(&emit);
+            let result = job(&item.video_id, &item.opts, &emit);
+            if SHUTDOWN.load(Ordering::SeqCst) {
+                return; // quitting: leave it saved to resume next time
+            }
+            match result {
+                Ok(file) => send(&emit, json!({ "kind": "done", "qid": item.qid, "file": file })),
+                Err(e) if e == "cancelada" => send(&emit, json!({ "kind": "cancelled", "qid": item.qid })),
+                Err(e) => send(&emit, json!({ "kind": "error", "qid": item.qid, "msg": e })),
+            }
+            *ACTIVE.lock().unwrap() = None;
+            persist_queue();
+            send_queue(&emit);
         }
-        BUSY.store(false, Ordering::SeqCst);
+        persist_queue();
+        send_queue(&emit);
     });
+}
+
+/// Starts the saved queue ("Reanudar").
+pub fn resume(emit: Emit) {
+    if QUEUE.lock().unwrap().is_empty() {
+        send_queue(&emit);
+    } else {
+        ensure_worker(emit);
+    }
+}
+
+/// Takes one waiting item out of the queue.
+pub fn remove_queued(qid: u64, emit: &Emit) {
+    QUEUE.lock().unwrap().retain(|i| i.qid != qid);
+    persist_queue();
+    send_queue(emit);
+}
+
+/// Empties the queue and stops the running download.
+pub fn clear_queue(emit: &Emit) {
+    QUEUE.lock().unwrap().clear();
+    persist_queue();
+    send_queue(emit);
+    cancel();
+}
+
+/// The app is closing: stop yt-dlp but keep the interrupted download (and the rest) saved.
+pub fn shutdown() {
+    SHUTDOWN.store(true, Ordering::SeqCst);
+    persist_queue();
+    cancel();
 }
 
 /// Stops the running yt-dlp (and its ffmpeg child) if any.
@@ -985,6 +1136,25 @@ mod tests {
             assert!(has(&args, "--no-playlist"), "{bad}");
             assert!(args.last().unwrap().contains("watch?v=dQw4w9WgXcQ"));
         }
+    }
+
+    #[test]
+    fn queue_items_survive_a_save_and_load() {
+        let item = QueueItem {
+            qid: 7,
+            video_id: "dQw4w9WgXcQ".into(),
+            label: "Canción".into(),
+            opts: Opts { mode: "audio".into(), audio_format: "mp3".into(), playlist_id: "PLabcdefghijk".into(), ..Default::default() },
+        };
+        let text = serde_json::to_string(&vec![item]).unwrap();
+        let back: Vec<QueueItem> = serde_json::from_str(&text).unwrap();
+        assert_eq!(back.len(), 1);
+        assert_eq!((back[0].qid, back[0].video_id.as_str(), back[0].label.as_str()), (7, "dQw4w9WgXcQ", "Canción"));
+        assert_eq!(back[0].opts.playlist_id, "PLabcdefghijk");
+        // an old file without some option fields still loads (missing ones take their defaults)
+        let old: Vec<QueueItem> = serde_json::from_str(r#"[{"qid":1,"video_id":"dQw4w9WgXcQ","label":"x","opts":{"mode":"video"}}]"#).unwrap();
+        assert_eq!(old[0].opts.mode, "video");
+        assert_eq!(old[0].opts.max_height, 0);
     }
 
     #[test]

@@ -49,6 +49,8 @@ Name: "{autodesktop}\PC Tube"; Filename: "{app}\PC Tube.exe"; Tasks: desktopicon
 
 [Run]
 Filename: "{app}\PC Tube.exe"; Description: "{cm:LaunchProgram,PC Tube}"; Flags: nowait postinstall skipifsilent
+; in-app updates run the installer silently: start the app again when it is done
+Filename: "{app}\PC Tube.exe"; Flags: nowait skipifnotsilent
 
 [Registry]
 ; the "start with Windows" entry goes away with the app

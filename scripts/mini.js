@@ -25,7 +25,7 @@
     'width:100vw !important;height:100vh !important;z-index:2147482000 !important;}' +
     'html.pctube-mini #pctube-winctl,html.pctube-mini .ytp-fullscreen-button,' +
     'html.pctube-mini .ytp-size-button,html.pctube-mini .ytp-miniplayer-button,' +
-    'html.pctube-mini #pctube-download{display:none !important;}' +
+    'html.pctube-mini #pctube-chapters,html.pctube-mini #pctube-download{display:none !important;}' +
     // compact controls for a small window
     'html.pctube-mini .ytp-chrome-bottom{left:6px !important;width:calc(100% - 12px) !important;}' +
     'html.pctube-mini .ytp-time-display,html.pctube-mini .ytp-volume-area{display:none !important;}' +
@@ -116,13 +116,9 @@
   window.addEventListener('yt-navigate-finish', function () {
     if (active && !onWatch()) exit();
   });
+  window.pctube.keys.register('mini', 'Mini-reproductor', 'Alt+M', toggle);
   window.addEventListener('keydown', function (e) {
-    if (e.altKey && !e.ctrlKey && !e.shiftKey && (e.key === 'm' || e.key === 'M')) {
-      e.preventDefault();
-      toggle();
-    } else if (active && e.key === 'Escape' && !e.altKey && !e.ctrlKey) {
-      exit();
-    }
+    if (active && e.key === 'Escape' && !e.altKey && !e.ctrlKey) exit();
   }, true);
 
   function makeButton() {

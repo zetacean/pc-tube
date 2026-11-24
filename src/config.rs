@@ -51,6 +51,13 @@ pub fn defaults() -> Value {
         // (playback continues), "exit" quits the app.
         "closeAction": "tray",
         "autostart": false,        // start with Windows, minimized to the tray
+        "globalShortcuts": { "playPause": "Ctrl+Alt+Space", "next": "Ctrl+Alt+Right", "prev": "Ctrl+Alt+Left" },
+        "shortcuts": {},            // page shortcuts the user changed: { action: "Alt+M" } (defaults in scripts/keys.js)
+        "notifyNowPlaying": "hidden", // Windows notification when a video starts: off | hidden | always
+        "captionsMode": "default",  // default (YouTube's) | off | lang
+        "captionsLang": "es",
+        "captionsAuto": true,       // accept auto-generated captions when there are no manual ones
+        "captionsTranslate": false, // otherwise translate the first available captions into captionsLang
         "globalHotkeys": true,     // Ctrl+Alt+Space / Right / Left work from any app
         "alwaysOnTop": false,      // keep the window above the others
 

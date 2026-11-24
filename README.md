@@ -14,6 +14,15 @@ Carga la interfaz normal de <https://www.youtube.com>.
 - **DeArrow**: títulos y miniaturas de la comunidad, y corrección de títulos EN MAYÚSCULAS.
 - **Apariencia** a golpe de clic (temas, color de acento, zoom, miniaturas, qué mostrar), filtros del feed
   (canales y palabras) y aviso de nuevas versiones (Ajustes → Apariencia, Interfaz y Acerca de).
+- **Capítulos y marcadores**: salta entre capítulos (los de la descripción del vídeo) y guarda tus
+  propios marcadores con nombre; panel con `Alt+C`.
+- **Subtítulos preferidos**: se activan solos en tu idioma (o se desactivan), con traducción opcional.
+- **Aviso de «ahora suena»**: notificación de Windows con la miniatura cuando empieza un vídeo y la
+  ventana no está a la vista.
+- **Cola de descargas**: varias a la vez en cola, cancelar, reintentar las fallidas y retomar lo que
+  quedó pendiente al cerrar la app.
+- **Actualización dentro de la app** (copia instalada): descarga el instalador de GitHub, comprueba su
+  suma SHA-256 y se actualiza sola.
 - **Mini-reproductor** (botón en el reproductor o `Alt+M`): ventana pequeña siempre visible en la
   esquina. Al cerrarlo puedes volver a la ventana completa o pausar el vídeo (configurable).
 - **Descargas** de vídeos y listas de reproducción completas con yt-dlp (`Alt+D`): diálogo con las resoluciones reales del vídeo, formato
@@ -59,14 +68,20 @@ cargo build --release     # versión final: target\release\pc_tube.exe
 
 ## Atajos
 
+Todos se ven y se pueden cambiar en **Ajustes → Atajos** (se avisa si dos chocan). Estos son los
+de fábrica:
+
 | Atajo | Acción |
 |---|---|
 | `Ctrl + ,` | Abrir los ajustes |
 | `Alt + M` | Mini-reproductor |
-| `Alt + D` | Descargar el vídeo actual |
-| `Alt + ]` / `Alt + [` | Velocidad más rápida / más lenta (hasta ×4) |
+| `Alt + D` | Descargar el vídeo actual (o la lista) |
+| `Alt + ↑` / `Alt + ↓` | Velocidad más rápida / más lenta (hasta ×4) |
 | `Alt + L` | Repetir el vídeo |
 | `Alt + K` | Repetir un tramo (inicio, final, quitar) |
+| `Alt + C` | Panel de capítulos y marcadores |
+| `Alt + .` / `Alt + ,` | Capítulo siguiente / anterior |
+| `Alt + B` | Añadir un marcador en este punto |
 | `Ctrl + Alt + Espacio` / `→` / `←` | Reproducir-pausar / siguiente / anterior, desde cualquier aplicación |
 
 ## Desarrollo

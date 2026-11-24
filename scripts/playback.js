@@ -1,4 +1,4 @@
-// Playback extras: speed beyond YouTube's 2x (Alt+] / Alt+[), remembered between videos,
+// Playback extras: speed beyond YouTube's 2x (Alt+Up / Alt+Down), remembered between videos,
 // repeat the video (Alt+L) and repeat a section A-B (Alt+K: set A, set B, clear).
 (function () {
   'use strict';
@@ -78,11 +78,9 @@
     C.set('playbackSpeed', e.target.playbackRate);
   }, true);
 
-  window.addEventListener('keydown', function (e) {
-    if (!e.altKey || e.ctrlKey || e.shiftKey || e.metaKey) return;
-    if (e.key === ']') { e.preventDefault(); step(1); }
-    else if (e.key === '[') { e.preventDefault(); step(-1); }
-    else if (e.key === 'l' || e.key === 'L') { e.preventDefault(); toggleLoop(); }
-    else if (e.key === 'k' || e.key === 'K') { e.preventDefault(); cycleAB(); }
-  }, true);
+  var K = window.pctube.keys;
+  K.register('speedUp', 'Velocidad más rápida', 'Alt+Up', function () { step(1); });
+  K.register('speedDown', 'Velocidad más lenta', 'Alt+Down', function () { step(-1); });
+  K.register('loop', 'Repetir el vídeo', 'Alt+L', toggleLoop);
+  K.register('abLoop', 'Repetir un tramo (inicio, final, quitar)', 'Alt+K', cycleAB);
 })();

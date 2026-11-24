@@ -3,6 +3,30 @@
 Formato: [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/). Las notas de cada versión
 se publican tal cual en su *release* de GitHub (el workflow toma la sección de la versión).
 
+## [0.4.0]
+
+### Añadido
+- **Atajos configurables** (Ajustes → Atajos): cada atajo se cambia pulsando la combinación nueva,
+  con aviso si choca con otro; los atajos globales (Ctrl+Alt+Espacio, →, ←) también, y se avisa
+  si otra aplicación ya usa la combinación.
+- **Subtítulos preferidos** (Ajustes → Reproducción): activarlos solos en tu idioma, aceptar los
+  automáticos, traducir si no hay en tu idioma, o desactivarlos siempre.
+- **Capítulos y marcadores**: capítulos a partir de las marcas de tiempo de la descripción, salto al
+  capítulo siguiente o anterior, y marcadores propios por vídeo con nombre, que se pueden copiar como
+  lista con enlaces. Panel con `Alt+C` o con el botón nuevo del reproductor.
+- **Aviso de «ahora suena»**: notificación de Windows con la miniatura al empezar un vídeo (por
+  defecto solo si la ventana no está a la vista; también «siempre» o «nunca»).
+- **Cola de descargas**: las descargas nuevas se añaden a la cola y siguen solas; se pueden quitar de
+  la cola, vaciarla, reintentar las que fallaron, y lo que quedó pendiente al cerrar la app se puede
+  reanudar al abrirla.
+- **Actualización dentro de la app**: «Actualizar ahora» en Ajustes → Acerca de descarga el
+  instalador nuevo, verifica su suma SHA-256 con la publicada en el release, lo instala en silencio y
+  reabre la app. Solo en la copia instalada; la portátil abre la página de descargas.
+
+### Cambiado
+- La velocidad usa ahora `Alt+↑` y `Alt+↓` (antes `Alt+]` y `Alt+[`, que en teclado español exigen
+  AltGr). Todos los atajos se pueden cambiar en Ajustes → Atajos.
+
 ## [0.3.0]
 
 ### Añadido

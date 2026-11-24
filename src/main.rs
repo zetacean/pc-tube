@@ -8,6 +8,7 @@ mod hotkeys;
 mod instance;
 mod ipc;
 mod net;
+mod notify;
 mod taskbar;
 mod tray;
 mod update;
@@ -47,12 +48,15 @@ fn init_script() -> String {
     [
         include_str!("../scripts/loader.js"), // first: the veil must appear before anything else
         include_str!("../scripts/bootstrap.js"),
+        include_str!("../scripts/keys.js"),
         include_str!("../scripts/adblock.js"),
         include_str!("../scripts/sponsorblock.js"),
         include_str!("../scripts/features.js"),
         include_str!("../scripts/appearance.js"),
         include_str!("../scripts/mini.js"),
         include_str!("../scripts/playback.js"),
+        include_str!("../scripts/captions.js"),
+        include_str!("../scripts/chapters.js"),
         include_str!("../scripts/download.js"),
         include_str!("../scripts/dldialog.js"),
         include_str!("../scripts/navbuttons.js"),
@@ -216,11 +220,15 @@ fn main() {
     let _ = webview.zoom(zoom);
 
     // Global shortcuts (Ctrl+Alt+Space / Right / Left).
-    let mut _hotkeys = if cfg.lock().unwrap()["globalHotkeys"].as_bool().unwrap_or(true) {
-        hotkeys::Hotkeys::register(proxy.clone())
-    } else {
-        None
+    let mut _hotkeys = {
+        let c = cfg.lock().unwrap();
+        if c["globalHotkeys"].as_bool().unwrap_or(true) {
+            hotkeys::Hotkeys::register(proxy.clone(), &c["globalShortcuts"])
+        } else {
+            None
+        }
     };
+    download::restore_queue(); // what was left unfinished last time (nothing starts by itself)
 
     // Geometry to go back to when the mini-player is closed: (position, size, maximized).
     let mut mini: Option<(tao::dpi::PhysicalPosition<i32>, tao::dpi::PhysicalSize<u32>, bool)> = None;
@@ -243,6 +251,14 @@ fn main() {
                 // Nothing playing counts as paused: the button then offers "play".
                 taskbar::set_paused(paused || title.is_empty());
             }
+            Event::UserEvent(ipc::Out::Notify { title, channel, video_id }) => {
+                // "hidden" (default): only when the window is out of sight; "always"; "off".
+                let mode = cfg.lock().unwrap()["notifyNowPlaying"].as_str().unwrap_or("hidden").to_string();
+                let in_view = window.is_visible() && !window.is_minimized() && window.is_focused();
+                if !title.is_empty() && mode != "off" && (mode == "always" || !in_view) {
+                    notify::now_playing(title, channel, video_id);
+                }
+            }
             Event::UserEvent(ipc::Out::Tray(action)) => match action {
                 ipc::TrayAction::PlayPause => {
                     let _ = webview.evaluate_script(JS_PLAY_PAUSE);
@@ -256,7 +272,7 @@ fn main() {
                 ipc::TrayAction::Show => show_window(&window),
                 ipc::TrayAction::Quit => {
                     if mini.is_none() { winstate::save(&window); }
-                    download::cancel(); // don't leave yt-dlp running after the app is gone
+                    download::shutdown(); // stop yt-dlp, keep the queue for next time
                     *control_flow = ControlFlow::Exit;
                 }
             },
@@ -270,7 +286,7 @@ fn main() {
                         if hide_instead_of_quit {
                             window.set_visible(false);
                         } else {
-                            download::cancel();
+                            download::shutdown();
                             *control_flow = ControlFlow::Exit;
                         }
                     }
@@ -324,7 +340,7 @@ fn main() {
                     WinCmd::Hotkeys(on) => {
                         _hotkeys = None; // unregister first (the same keys can't be taken twice)
                         if on {
-                            _hotkeys = hotkeys::Hotkeys::register(proxy.clone());
+                            _hotkeys = hotkeys::Hotkeys::register(proxy.clone(), &cfg.lock().unwrap()["globalShortcuts"]);
                         }
                     }
                     WinCmd::Drag => {
@@ -352,7 +368,7 @@ fn main() {
                 if hide_instead_of_quit {
                     window.set_visible(false);
                 } else {
-                    download::cancel();
+                    download::shutdown();
                     *control_flow = ControlFlow::Exit;
                 }
             }

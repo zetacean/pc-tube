@@ -12,7 +12,9 @@
   // State shared with the panel (scripts/ui.js).
   //   active: null | { title, pct, status }
   //   tools:  { ytdlp|ffmpeg: { state: 'working'|'done'|'error', msg, pct } }
-  var dl = window.pctube.dl = { active: null, tools: {}, listeners: [] };
+  //   queue:  [{ qid, videoId, label, opts }] waiting (the truth is kept by Rust, src/download.rs)
+  //   failed: [{ videoId, label, opts, msg }] downloads that ended in an error (retry from the panel)
+  var dl = window.pctube.dl = { active: null, queue: [], running: false, failed: [], tools: {}, listeners: [] };
   dl.on = function (fn) { dl.listeners.push(fn); };
   function emit(ev) { dl.listeners.forEach(function (fn) { try { fn(ev); } catch (e) {} }); }
 
@@ -60,17 +62,22 @@
     return { embedMeta: C.get('downloadEmbedMeta') !== false, removeCategories: cats.join(',') };
   }
 
-  // Starts the download with explicit options (the dialog calls this).
+  function cleanTitle() {
+    return document.title.replace(/^\(\d+\)\s*/, '').replace(/\s*-\s*YouTube$/, '');
+  }
+
+  // Adds a download to the queue with explicit options (the dialog calls this). Several can be
+  // queued; they run one after another.
   function begin(id, opts) {
-    if (dl.active) { toast('Ya hay una descarga en curso'); return; }
-    dl.active = { title: null, pct: 0, status: 'Preparando…', indeterminate: false };
-    toast('Preparando descarga…', 4000);
-    emit({ kind: 'start' });
-    var msg = { videoId: id };
+    var waiting = !!dl.active || dl.queue.length > 0;
+    var qid = Date.now() * 1000 + Math.floor(Math.random() * 1000);
+    var msg = { videoId: id, qid: qid, label: cleanTitle() };
     var extra = extraOptions();
     for (var e in extra) msg[e] = extra[e];
     for (var k in opts) msg[k] = opts[k];
+    toast(waiting ? 'Añadida a la cola de descargas' : 'Preparando descarga…', waiting ? 3000 : 4000);
     window.pctube.send('download', msg);
+    emit({ kind: 'queued' });
   }
   window.pctube.beginDownload = begin;
 
@@ -79,7 +86,6 @@
     if (!enabled()) return;
     var id = videoId();
     if (!id) { toast('Abre un vídeo para descargarlo'); return; }
-    if (dl.active) { toast('Ya hay una descarga en curso'); return; }
     if (C.get('downloadAsk') !== false && window.pctube.openDownloadDialog) {
       window.pctube.openDownloadDialog(id);
     } else {
@@ -88,11 +94,33 @@
   }
   window.pctube.download = start;
   dl.cancel = function () { window.pctube.send('cancelDownload'); };
+  dl.cancelQueued = function (qid) { window.pctube.send('cancelQueued', { qid: qid }); };
+  dl.clearAll = function () { window.pctube.send('clearQueue'); };
+  dl.resume = function () { window.pctube.send('resumeQueue'); };
+  dl.retry = function (f) {
+    dl.failed = dl.failed.filter(function (x) { return x !== f; });
+    // Rust describes the options with snake_case names; the download message uses camelCase.
+    var src = f.opts || {};
+    var o = { label: f.label, mode: src.mode, maxHeight: src.max_height, container: src.container,
+      audioFormat: src.audio_format, audioQuality: src.audio_quality, duration: src.duration,
+      embedMeta: src.embed_meta, removeCategories: src.remove_categories, playlistId: src.playlist_id };
+    emit({ kind: 'queued' });
+    begin(f.videoId, o);
+  };
+  dl.forget = function (f) { dl.failed = dl.failed.filter(function (x) { return x !== f; }); emit({ kind: 'queued' }); };
 
   // Events from Rust (src/download.rs).
   window.pctube._download = function (ev) {
     var a = dl.active;
     switch (ev.kind) {
+      case 'queue':
+        dl.queue = (ev.queue && ev.queue.items) || [];
+        dl.running = !!(ev.queue && ev.queue.running);
+        break;
+      case 'start':
+        dl.active = { qid: ev.qid, videoId: ev.videoId, opts: ev.opts, label: ev.label, title: ev.label || null,
+          pct: 0, status: 'Preparando…', indeterminate: false, prefix: '' };
+        break;
       case 'status':
         if (a) a.status = ev.msg;
         toast(ev.msg, 5000);
@@ -124,6 +152,10 @@
         toast('Descarga cancelada', 4000);
         break;
       case 'error':
+        if (a) {
+          dl.failed.unshift({ videoId: a.videoId, label: a.label || a.title, opts: a.opts, msg: ev.msg });
+          dl.failed = dl.failed.slice(0, 20);
+        }
         dl.active = null;
         toast('No se pudo descargar: ' + ev.msg, 10000);
         break;
@@ -136,12 +168,20 @@
     emit(ev);
   };
 
-  window.addEventListener('keydown', function (e) {
-    if (e.altKey && !e.ctrlKey && !e.shiftKey && (e.key === 'd' || e.key === 'D')) {
-      e.preventDefault();
-      start();
-    }
-  }, true);
+  window.pctube.keys.register('download', 'Descargar el vídeo (o la lista)', 'Alt+D', start);
+
+  // What was left in the queue when the app closed: show it (nothing starts by itself).
+  setTimeout(function () {
+    window.pctube.call('queueInfo').then(function (q) {
+      dl.queue = q.items || [];
+      dl.running = !!q.running;
+      if (dl.queue.length && !dl.running) {
+        toast('Hay ' + dl.queue.length + (dl.queue.length === 1 ? ' descarga pendiente' : ' descargas pendientes') +
+          ' de la última vez (Ajustes → Descargas)', 9000);
+      }
+      emit({ kind: 'queued' });
+    }).catch(function () {});
+  }, 4000);
 
   function makeButton() {
     var ns = 'http://www.w3.org/2000/svg';

@@ -142,12 +142,68 @@
     var info = null;
     var toolsBox = h('div', { class: 'card' });
     var activeBox = h('div', { class: 'card' });
+    var queueBox = h('div', { class: 'card' });
+    var failedBox = h('div', {});
     var filesBox = h('div', {});
     var root = h('div', {}, [
       h('div', { class: 'sub' }, 'Herramientas'), toolsBox,
       h('div', { class: 'sub' }, 'En curso'), activeBox,
+      h('div', { class: 'sub' }, 'En cola'), queueBox,
+      failedBox,
       h('div', { class: 'sub' }, 'Archivos descargados'), filesBox
     ]);
+
+    // One line describing what a queued download will produce.
+    function describe(o) {
+      o = o || {};
+      var what = o.mode === 'audio' ? 'Audio ' + String(o.audio_format || '').toUpperCase()
+        : (o.max_height ? o.max_height + 'p ' : 'Mejor calidad ') + String(o.container || '').toUpperCase();
+      return (o.playlist_id ? 'Lista completa · ' : '') + what;
+    }
+
+    function renderQueue() {
+      clear(queueBox);
+      var q = DL.queue || [];
+      if (!q.length) {
+        queueBox.appendChild(h('div', { class: 'd' }, 'La cola está vacía. Si descargas algo mientras hay otra descarga en curso, se añade aquí y empieza sola al terminar la anterior.'));
+        return;
+      }
+      queueBox.appendChild(h('div', { class: 'row nb' }, [
+        h('div', { class: 'd' }, q.length + (q.length === 1 ? ' en espera' : ' en espera') +
+          (DL.running ? '' : ' · en pausa (quedaron de la última vez)')),
+        h('div', { class: 'acts' }, [
+          DL.running ? null : btn('Reanudar', function () { DL.resume(); }),
+          btn('Vaciar cola', function () { DL.clearAll(); }, 'danger')
+        ])
+      ]));
+      q.forEach(function (item) {
+        queueBox.appendChild(h('div', { class: 'file' }, [
+          h('div', { class: 'lbl grow' }, [
+            h('div', { class: 't clip' }, item.label || item.videoId),
+            h('div', { class: 'd' }, describe(item.opts))
+          ]),
+          btn('Quitar', function () { DL.cancelQueued(item.qid); })
+        ]));
+      });
+    }
+
+    function renderFailed() {
+      clear(failedBox);
+      if (!DL.failed.length) return;
+      failedBox.appendChild(h('div', { class: 'sub' }, 'No se pudieron descargar'));
+      var card = h('div', { class: 'card' });
+      DL.failed.forEach(function (f) {
+        card.appendChild(h('div', { class: 'file' }, [
+          h('div', { class: 'lbl grow' }, [
+            h('div', { class: 't clip' }, f.label || f.videoId),
+            h('div', { class: 'd err' }, f.msg)
+          ]),
+          btn('Reintentar', function () { DL.retry(f); }),
+          btn('Descartar', function () { DL.forget(f); })
+        ]));
+      });
+      failedBox.appendChild(card);
+    }
 
     function toolRow(tool, name, statusText, installedActions) {
       var st = DL.tools[tool];
@@ -252,14 +308,15 @@
       });
     }
 
-    renderTools(); renderActive(); renderFiles(); load();
+    renderTools(); renderActive(); renderQueue(); renderFailed(); renderFiles(); load();
 
     return {
       root: root,
       onEvent: function (ev) {
         switch (ev.kind) {
-          case 'start': case 'title': case 'status': case 'progress': case 'phase': renderActive(); break;
-          case 'done': case 'cancelled': case 'error': renderActive(); load(); break;
+          case 'start': case 'title': case 'status': case 'progress': case 'phase': renderActive(); renderQueue(); break;
+          case 'queue': case 'queued': renderQueue(); renderFailed(); break;
+          case 'done': case 'cancelled': case 'error': renderActive(); renderQueue(); renderFailed(); load(); break;
           case 'tool': renderTools(); if (ev.state !== 'working') load(); break;
         }
       }
@@ -378,17 +435,163 @@
     return nodes;
   }
 
+  // ---------- Shortcuts ----------
+  // A button that records the next key combination you press. `onPick(combo)` gets the combination
+  // ('' = cleared); return a string to refuse it (shown under the button) or nothing to accept.
+  function keyButton(text, onPick, needsModifier) {
+    var K = window.pctube.keys;
+    var wrap = h('div', { class: 'keywrap' });
+    var b = h('button', { class: 'keybtn', type: 'button' }, text);
+    var msg = h('div', { class: 'd warn' });
+    wrap.appendChild(b);
+    wrap.appendChild(msg);
+    var listening = false;
+    function stop(listener) {
+      listening = false;
+      K.capturing = false;
+      window.removeEventListener('keydown', listener, true);
+    }
+    b.addEventListener('click', function () {
+      if (listening) return;
+      listening = true;
+      K.capturing = true;
+      msg.textContent = '';
+      var old = b.textContent;
+      b.textContent = 'Pulsa la combinación…';
+      b.classList.add('rec');
+      var listener = function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (e.key === 'Escape') { stop(listener); b.textContent = old; b.classList.remove('rec'); return; }
+        var c = (e.key === 'Backspace' || e.key === 'Delete') ? '' : K.fromEvent(e);
+        if (c === null) return;                                  // only a modifier so far
+        var problem = null;
+        if (c && needsModifier && !/^(Ctrl|Alt|Win)/.test(c) && !/^F\d+$/.test(c)) {
+          problem = 'Usa una combinación con Ctrl o Alt (o una tecla F), para no quitarle esa tecla al teclado.';
+        } else if (c) {
+          problem = onPick(c, false);
+        } else {
+          onPick('', true);
+        }
+        stop(listener);
+        b.classList.remove('rec');
+        if (problem) { b.textContent = old; msg.textContent = problem; }
+      };
+      window.addEventListener('keydown', listener, true);
+    });
+    return wrap;
+  }
+
+  function shortcutsSection() {
+    var K = window.pctube.keys;
+    var rerender = function () { select('keys'); };
+    var nodes = [h('div', { class: 'sub' }, 'Dentro de PC Tube')];
+    K.list().forEach(function (a) {
+      var btnEl = keyButton(K.pretty(a.combo), function (c) {
+        var other = K.owner(c, a.id);
+        if (other) return 'Ya la usa «' + other.label + '».';
+        K.set(a.id, c);
+        rerender();
+      }, false);
+      var parts = [btnEl];
+      if (a.combo !== a.def) {
+        parts.push(btn('Original', function () { K.set(a.id, a.def); rerender(); }));
+      }
+      nodes.push(h('div', { class: 'row' }, [
+        label(a.label, a.combo !== a.def ? 'Original: ' + K.pretty(a.def) : null),
+        h('div', { class: 'acts' }, parts)
+      ]));
+    });
+    nodes.push(action('Restablecer atajos', 'Vuelve a las combinaciones originales de PC Tube.', 'Restablecer', function () { K.resetAll(); rerender(); }));
+
+    nodes.push(h('div', { class: 'sub' }, 'Globales (desde cualquier aplicación)'));
+    nodes.push(toggle('globalHotkeys', 'Atajos globales', 'Controlan la reproducción aunque PC Tube esté en la bandeja o en segundo plano. Deben llevar Ctrl, Alt o Win.'));
+    var GLOBALS = [
+      ['playPause', 'Reproducir / pausar', 'Ctrl+Alt+Space'],
+      ['next', 'Siguiente', 'Ctrl+Alt+Right'],
+      ['prev', 'Anterior', 'Ctrl+Alt+Left']
+    ];
+    var cur = C.get('globalShortcuts') || {};
+    function combo(id, def) { return Object.prototype.hasOwnProperty.call(cur, id) ? cur[id] : def; }
+    var status = h('div', { class: 'd warn' });
+    GLOBALS.forEach(function (g) {
+      var now = combo(g[0], g[2]);
+      var btnEl = keyButton(K.pretty(now), function (c) {
+        for (var i = 0; i < GLOBALS.length; i++) {
+          if (GLOBALS[i][0] !== g[0] && c && combo(GLOBALS[i][0], GLOBALS[i][2]) === c) return 'Ya la usa «' + GLOBALS[i][1] + '».';
+        }
+        var all = {};
+        GLOBALS.forEach(function (x) { all[x[0]] = combo(x[0], x[2]); });
+        all[g[0]] = c;
+        C.set('globalShortcuts', all);
+        setTimeout(rerender, 500);
+      }, true);
+      var parts = [btnEl];
+      if (now !== g[2]) {
+        parts.push(btn('Original', function () {
+          var all = {};
+          GLOBALS.forEach(function (x) { all[x[0]] = combo(x[0], x[2]); });
+          all[g[0]] = g[2];
+          C.set('globalShortcuts', all);
+          setTimeout(rerender, 500);
+        }));
+      }
+      nodes.push(h('div', { class: 'row' }, [label(g[1], now !== g[2] ? 'Original: ' + K.pretty(g[2]) : null), h('div', { class: 'acts' }, parts)]));
+    });
+    nodes.push(status);
+    window.pctube.call('hotkeyStatus').then(function (failed) {
+      if (failed && failed.length) {
+        status.textContent = 'No se pudieron registrar: ' + failed.join(', ') + '. Puede que otra aplicación ya use esa combinación; elige otra.';
+      }
+    }).catch(function () {});
+    return nodes;
+  }
+
   // ---------- Updates ----------
+  // Events of an update in progress (from src/update.rs). Kept outside the panel so that an
+  // error or "installing" is shown even if the panel was closed.
+  var updState = null, updListener = null;
+  window.pctube._update = function (ev) {
+    updState = ev;
+    if (ev.state === 'error' && window.pctube.toast) window.pctube.toast('No se pudo actualizar: ' + ev.msg, 9000);
+    if (ev.state === 'installing' && window.pctube.toast) window.pctube.toast(ev.msg, 8000);
+    if (updListener) updListener();
+  };
+
   function updateRow() {
     var info = h('div', { class: 'd' }, 'Comprobando…');
+    var progBox = h('div', {});
     var openBtn = btn('Ver la versión nueva', function () { window.pctube.send('openRelease'); });
+    var applyBtn = btn('Actualizar ahora', function () {
+      updState = { state: 'working', msg: 'Preparando…', pct: 0 };
+      paintProgress();
+      window.pctube.send('applyUpdate', { dry: !!window.pctube.updateDry });   // dry: only honoured in test sessions
+    });
+    applyBtn.classList.add('pri');
     openBtn.style.display = 'none';
+    applyBtn.style.display = 'none';
+    var last = null;
+    function paintProgress() {
+      clear(progBox);
+      if (!updState) return;
+      var working = updState.state === 'working';
+      var t = updState.msg + (working && updState.pct != null ? ' ' + updState.pct + '%' : '');
+      progBox.appendChild(h('div', { class: 'd ' + (updState.state === 'error' ? 'err' : updState.state === 'working' ? '' : 'ok') }, t));
+      if (working) progBox.appendChild(bar(updState.pct, updState.pct == null));
+      applyBtn.disabled = working || updState.state === 'installing';
+    }
     function show(r) {
+      last = r;
       info.textContent = r.newer
         ? 'Hay una versión nueva: ' + r.latest + ' (tienes la ' + r.current + ').'
         : 'Estás al día: versión ' + r.current + '.';
       info.className = 'd ' + (r.newer ? 'warn' : 'ok');
+      // Installed copy: update in place. Portable copy: only the page (nothing to replace here).
+      var canApply = r.newer && r.canApply && (r.installed || window.pctube.updateDry);
+      applyBtn.style.display = canApply ? '' : 'none';
       openBtn.style.display = r.newer ? '' : 'none';
+      if (r.newer && !canApply && r.canApply === false) info.textContent += ' (esta versión no trae instalador)';
+      if (r.newer && !r.installed && !window.pctube.updateDry) info.textContent += ' Esta copia es portátil: descarga la nueva desde la página.';
     }
     function check(force) {
       info.textContent = 'Comprobando…';
@@ -401,10 +604,12 @@
         info.className = 'd err';
       });
     }
+    updListener = paintProgress;
+    paintProgress();
     if (window.pctube.update) show(window.pctube.update); else check(false);
     return h('div', { class: 'row' }, [
-      h('div', { class: 'lbl' }, [h('div', { class: 't' }, 'Versión'), info]),
-      h('div', { class: 'acts' }, [openBtn, btn('Buscar ahora', function () { check(true); })])
+      h('div', { class: 'lbl grow' }, [h('div', { class: 't' }, 'Versión'), info, progBox]),
+      h('div', { class: 'acts' }, [applyBtn, openBtn, btn('Buscar ahora', function () { check(true); })])
     ]);
   }
 
@@ -505,10 +710,22 @@
             { value: 'noav1', label: 'Evitar AV1 (recomendado)' },
             { value: 'h264', label: 'Solo H.264 (máximo 1080p)' }
           ]),
-          toggle('rememberSpeed', 'Recordar la velocidad', 'Mantiene la velocidad de reproducción en los siguientes vídeos. Atajos: Alt + ] más rápido (hasta ×4), Alt + [ más lento, Alt + L repetir el vídeo, Alt + K repetir un tramo (inicio, final, quitar).'),
+          toggle('rememberSpeed', 'Recordar la velocidad', 'Mantiene la velocidad de reproducción en los siguientes vídeos. La velocidad llega hasta ×4 y los atajos (más rápido, más lento, repetir vídeo o tramo) se ven y se cambian en la sección Atajos.'),
+          h('div', { class: 'sub' }, 'Subtítulos'),
+          choice('captionsMode', 'Subtítulos al empezar un vídeo', 'Usa los subtítulos del propio vídeo, igual que si los eligieras en el menú del reproductor.', [
+            { value: 'default', label: 'Como YouTube (sin cambios)' },
+            { value: 'lang', label: 'Activar en mi idioma' },
+            { value: 'off', label: 'Siempre desactivados' }
+          ]),
+          choice('captionsLang', 'Mi idioma de subtítulos', null, window.pctube.captionLanguages.map(function (l) { return { value: l[0], label: l[1] }; })),
+          toggle('captionsAuto', 'Aceptar subtítulos automáticos', 'Si el vídeo no tiene subtítulos hechos por su autor en ese idioma, usa los generados automáticamente.'),
+          toggle('captionsTranslate', 'Traducir si no hay en mi idioma', 'Si no hay subtítulos en tu idioma (ni automáticos), traduce los primeros disponibles con la traducción de YouTube.'),
           range('volumeBoost', 'Volumen máximo', 'Por encima del 100 % amplifica el audio de vídeos con poco volumen, con un limitador para evitar distorsión. Se multiplica por el volumen de YouTube.', 100, 300, 25, '%')
         ];
       }
+    },
+    {
+      id: 'keys', title: 'Atajos', build: shortcutsSection
     },
     {
       id: 'general', title: 'General', build: function () {
@@ -518,7 +735,11 @@
             { value: 'exit', label: 'Cerrar la aplicación' }
           ]),
           toggle('autostart', 'Iniciar con Windows', 'Abre PC Tube al iniciar sesión, directamente en la bandeja y sin ventana. Registra el .exe desde el que lo actives: actívalo con la versión que vayas a usar.'),
-          toggle('globalHotkeys', 'Atajos globales', 'Funcionan desde cualquier aplicación, aunque PC Tube esté en la bandeja: Ctrl + Alt + Espacio reproducir/pausar, Ctrl + Alt + → siguiente, Ctrl + Alt + ← anterior.'),
+          choice('notifyNowPlaying', 'Aviso de «ahora suena»', 'Una notificación de Windows con la miniatura cuando empieza un vídeo. «Solo si no estoy mirando» la muestra cuando la ventana está en la bandeja, minimizada o en segundo plano.', [
+            { value: 'hidden', label: 'Solo si no estoy mirando la ventana' },
+            { value: 'always', label: 'Siempre' },
+            { value: 'off', label: 'Nunca' }
+          ]),
           toggle('alwaysOnTop', 'Mantener siempre visible', 'La ventana queda por encima de las demás. También con la chincheta de la barra superior.'),
           h('div', { class: 'sub' }, 'Copia de seguridad'),
           action('Exportar ajustes', 'Guarda tus ajustes en un archivo .json (no incluye tu sesión de YouTube).', 'Exportar…', function () {
@@ -589,7 +810,7 @@
             h('p', {}, 'PC Tube: envoltorio de YouTube para Windows con WebView2, sin Electron.'),
             h('p', {}, 'Adblock, SponsorBlock y DeArrow basados en TizenTube (GPL-3.0).'),
             h('p', {}, 'Los ajustes se guardan en %LOCALAPPDATA%\\PcTube\\config.json.'),
-            h('p', {}, 'Atajos: Ctrl + , abre este panel · Alt + M mini-reproductor · Alt + D descargar')
+            h('p', {}, 'Todos los atajos se ven y se cambian en la sección Atajos (Ctrl + , abre este panel).')
           ]),
           h('div', { class: 'sub' }, 'Actualizaciones'),
           toggle('checkUpdates', 'Avisar de nuevas versiones', 'Al abrir la app consulta la última versión publicada en GitHub (solo lee; no instala nada y no envía datos tuyos).'),
@@ -654,6 +875,10 @@
     '.swatch.on{border-color:var(--fg);box-shadow:0 0 0 2px var(--raised) inset}',
     'input.color{width:34px;height:30px;padding:0;border:1px solid var(--line);border-radius:8px;background:none;cursor:pointer}',
     '.pair{display:flex;gap:20px;flex-wrap:wrap;color:var(--fg2)}.pair label{display:flex;align-items:center;gap:8px}',
+    '.keywrap{display:flex;flex-direction:column;align-items:flex-end;gap:4px;max-width:260px}',
+    '.keybtn{min-width:150px;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:7px 12px;font:inherit;cursor:pointer}',
+    '.keybtn:hover{border-color:var(--accent)}.keybtn.rec{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent) inset;color:var(--accent)}',
+    '.btn.pri{background:var(--accent);color:#0f0f0f;font-weight:500}.btn[disabled]{opacity:.5;cursor:default}',
     '.about p{color:var(--fg2);margin:12px 0}'
   ].join('');
 
@@ -717,10 +942,7 @@
   window.pctube.appearance.onMode(function () { if (host && activeId === 'look') select('look'); });
   window.pctube.config.onChange(function (key) { if (key === 'uiMode' && host && activeId === 'look') setTimeout(function () { select('look'); }, 100); });
 
-  // Ctrl + ,
-  window.addEventListener('keydown', function (e) {
-    if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key === ',') { e.preventDefault(); open(); }
-  }, true);
+  window.pctube.keys.register('settings', 'Abrir los ajustes', 'Ctrl+,', function () { open(); });
 
   // ---------- Gear button in the YouTube top bar ----------
   var GEAR = 'M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.488.488 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.484.484 0 0 0-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z';
