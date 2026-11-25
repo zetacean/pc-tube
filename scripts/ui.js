@@ -508,6 +508,7 @@
     {
       id: 'dl', title: 'Opciones de descarga', build: function () {
         return [
+          toggle('showDownloadQueue', 'Mostrar la cola de descargas', 'Un panel plegable abajo a la derecha con lo que se está descargando y lo que espera, con pausar, reanudar y cancelar. Solo aparece mientras hay descargas.'),
           toggle('enableDownload', 'Botón de descarga', 'Añade un botón al reproductor (y el atajo Alt + D) para descargar el vídeo que estás viendo.'),
           toggle('downloadAsk', 'Elegir formato y calidad antes de descargar', 'Muestra un diálogo con las resoluciones y formatos reales del vídeo. Si lo desactivas, se usan directamente las opciones de abajo.'),
           h('div', { class: 'sub' }, 'Valores por defecto (también se actualizan al elegir en el diálogo)'),

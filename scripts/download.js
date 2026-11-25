@@ -14,7 +14,7 @@
   //   tools:  { ytdlp|ffmpeg: { state: 'working'|'done'|'error', msg, pct } }
   //   queue:  [{ qid, videoId, label, opts }] waiting (the truth is kept by the manager)
   //   jobs:   [{ qid, videoId, label, title, pct, status, ... }] running now (as many as the manager allows)
-  var dl = window.pctube.dl = { jobs: [], queue: [], running: false, limit: 2, tools: {}, listeners: [] };
+  var dl = window.pctube.dl = { jobs: [], queue: [], running: false, limit: 2, pausedAll: false, tools: {}, listeners: [] };
   // The first running download (what older code and the single-line summaries show).
   Object.defineProperty(dl, 'active', { get: function () { return dl.jobs[0] || null; } });
   function jobOf(qid) {
@@ -102,6 +102,42 @@
   // One running download (by id) or, without id, all of them.
   dl.cancel = function (qid) { window.pctube.send('cancelDownload', qid ? { qid: qid } : {}); };
   dl.cancelQueued = function (qid) { window.pctube.send('cancelQueued', { qid: qid }); };
+  dl.pause = function (qid) { window.pctube.send('pauseDownload', { qid: qid }); };
+  dl.resumeOne = function (qid) { window.pctube.send('resumeDownload', { qid: qid }); };
+  // Everything on hold (or the whole queue paused) starts again / the whole queue is held.
+  dl.pauseAll = function (on) {
+    if (on) window.pctube.send('pauseAllDownloads', { value: true });
+    else window.pctube.send('resumeQueue');
+  };
+
+  // Downloads running or waiting (not held back): what the badge on the download buttons counts.
+  dl.activeCount = function () {
+    return dl.jobs.length + dl.queue.filter(function (i) { return !i.paused; }).length;
+  };
+
+  // A small number on the download buttons (player and top bar) while something is downloading.
+  function paintBadges() {
+    var n = dl.activeCount();
+    ['pctube-download', 'pctube-dlhub'].forEach(function (id) {
+      var b = document.getElementById(id);
+      if (!b) return;
+      var badge = b.querySelector('.pctube-badge');
+      if (!n) { if (badge) badge.remove(); return; }
+      if (!badge) {
+        badge = document.createElement('span');
+        badge.className = 'pctube-badge';
+        badge.style.cssText = 'position:absolute;top:2px;right:0;min-width:16px;height:16px;padding:0 4px;box-sizing:border-box;' +
+          'border-radius:8px;background:#3ea6ff;color:#0f0f0f;font:700 11px/16px Roboto,Arial,sans-serif;text-align:center;pointer-events:none;';
+        if (getComputedStyle(b).position === 'static') b.style.position = 'relative';
+        b.appendChild(badge);
+      }
+      badge.textContent = n > 99 ? '99+' : String(n);
+      var tip = dl.jobs.length + ' en curso' + (dl.queue.length ? ', ' + dl.queue.length + ' en cola' : '');
+      b.title = (id === 'pctube-download' ? 'Descargar vídeo (Alt+D) · ' : 'Gestor de descargas · ') + tip;
+    });
+  }
+  window.pctube.paintDownloadBadges = paintBadges;
+  setInterval(paintBadges, 1500);
 
   // Opens the download manager's window (queue, history, speed limit, folders, tools...).
   window.pctube.openManager = function () {
@@ -117,7 +153,17 @@
       case 'queue':
         dl.queue = (ev.queue && ev.queue.items) || [];
         dl.running = !!(ev.queue && ev.queue.running);
+        dl.pausedAll = !!(ev.queue && ev.queue.pausedAll);
         if (ev.queue && ev.queue.limit) dl.limit = ev.queue.limit;
+        // Downloads that started before this window knew the manager (or from its own window).
+        if (ev.queue && ev.queue.activeItems) {
+          var live = ev.queue.activeItems;
+          dl.jobs = dl.jobs.filter(function (j) { return live.some(function (x) { return x.qid === j.qid; }); });
+          live.forEach(function (x) {
+            if (!jobOf(x.qid)) dl.jobs.push({ qid: x.qid, videoId: x.videoId, opts: x.opts, label: x.label, title: x.label || null,
+              pct: 0, status: 'En curso', indeterminate: false, prefix: '' });
+          });
+        }
         break;
       case 'start':
         dl.jobs.push({ qid: ev.qid, videoId: ev.videoId, opts: ev.opts, label: ev.label, title: ev.label || null,
@@ -141,7 +187,7 @@
         if (lead) toast((a.prefix || '') + ev.label + (ev.pct == null ? '…' : ' · ' + ev.pct + '%'), 1500);
         break;
       case 'progress':
-        if (a) { a.pct = ev.pct; a.indeterminate = false; }
+        if (a) { a.pct = ev.pct; a.indeterminate = false; a.speed = ev.speed; a.eta = ev.eta; }
         if (lead) toast((a.status && a.status !== 'Preparando…' ? a.status : 'Descargando') + ' · ' + ev.pct + '%' +
           (dl.jobs.length > 1 ? ' (+' + (dl.jobs.length - 1) + ' más)' : ''), 1500);
         break;
@@ -167,6 +213,7 @@
         else if (ev.state === 'error') toast('Error: ' + ev.msg, 10000);
         break;
     }
+    paintBadges();
     emit(ev);
   };
 

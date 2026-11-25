@@ -187,6 +187,9 @@ pub fn handle(body: &str, cfg: &Config, emit: impl Fn(Out) + Send + 'static) {
             });
         }
         "cancelQueued" => manager_cmd("cancelQueued", json!({ "qid": m.qid })),
+        "pauseDownload" => manager_cmd("pause", json!({ "qid": m.qid })),
+        "resumeDownload" => manager_cmd("resumeItem", json!({ "qid": m.qid })),
+        "pauseAllDownloads" => manager_cmd("pauseAll", json!({ "on": m.value.as_ref().and_then(Value::as_bool).unwrap_or(true) })),
         "clearQueue" => manager_cmd("clearQueue", json!({})),
         "resumeQueue" => manager_cmd("resume", json!({})),
         "queueInfo" => {

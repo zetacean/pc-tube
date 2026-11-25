@@ -3,6 +3,12 @@
 Formato: [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/). Las notas de cada versión
 se publican tal cual en su *release* de GitHub (el workflow toma la sección de la versión).
 
+## [0.6.1]
+
+### Añadido
+- **Número de descargas** sobre el botón de descarga del reproductor y el de la barra superior mientras hay descargas en marcha o en espera.
+- **Cola de descargas** en la esquina inferior derecha de la ventana principal: lo que se descarga y lo que espera, con su progreso, velocidad y tiempo restante, y botones para pausar, reanudar o cancelar cada una (o pausar todo). Se pliega a una pastilla pequeña y se recuerda cómo la dejaste. Solo aparece mientras hay descargas; se puede quitar en Ajustes → Opciones de descarga.
+
 ## [0.6.0]
 
 ### Añadido

@@ -59,6 +59,7 @@ fn init_script() -> String {
         include_str!("../scripts/chapters.js"),
         include_str!("../scripts/download.js"),
         include_str!("../scripts/dldialog.js"),
+        include_str!("../scripts/dlqueue.js"),
         include_str!("../scripts/navbuttons.js"),
         include_str!("../scripts/quality.js"),
         include_str!("../scripts/boost.js"),
