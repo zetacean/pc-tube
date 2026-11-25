@@ -4,8 +4,8 @@
 //! starts the new version when it finishes. Only the installed copy updates itself: a portable copy
 //! has nothing to replace, so there the button just opens the release page.
 
-use crate::download::{download_to, expected_hash, get_text, http_agent, send_raw, Emit};
-use crate::ipc::{Out, TrayAction};
+use crate::ipc::{Emit, Out, TrayAction};
+use pc_tube::http::{download_to, expected_hash, get_text, http_agent};
 use serde_json::{json, Value};
 use std::{
     os::windows::process::CommandExt,
@@ -152,7 +152,8 @@ pub fn open_release_page() {
 }
 
 fn ev(emit: &Emit, state: &str, msg: &str, pct: Option<u32>) {
-    send_raw(emit, "_update", json!({ "state": state, "msg": msg, "pct": pct }));
+    let payload = json!({ "state": state, "msg": msg, "pct": pct });
+    emit(Out::Eval(format!("window.pctube&&window.pctube._update&&window.pctube._update({payload})")));
 }
 
 /// Downloads the installer of the cached "newer" release, verifies it and (unless `dry`) starts it
@@ -210,6 +211,11 @@ fn apply_inner(emit: &Emit, dry: bool) -> Result<(), String> {
         ev(emit, "verified", "Descarga verificada (prueba: no se instala)", Some(100));
         return Ok(());
     }
+
+    // The download manager is part of the installation: it must close before its files are replaced
+    // (what was running stays in its saved queue).
+    ev(emit, "installing", "Cerrando el gestor de descargas…", Some(100));
+    crate::dm::quit_and_wait();
 
     // The installer is started after a pause so that this process (and its single-instance
     // mutex) is gone first. It reopens the app when it finishes (see installer/pctube.iss).

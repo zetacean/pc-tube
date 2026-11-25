@@ -1,0 +1,538 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>PC Tube Descargas</title>
+<meta name="color-scheme" content="dark light">
+<style>
+:root {
+  --bg: #121212; --panel: #1c1c1e; --panel2: #242427; --line: #34343a; --fg: #f1f1f1; --fg2: #a8a8b0;
+  --accent: #3ea6ff; --accent-fg: #06121f; --ok: #4cd08a; --warn: #f2b84b; --err: #ff6b6b; --shadow: rgba(0,0,0,.45);
+}
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f4f5f7; --panel: #ffffff; --panel2: #eef0f3; --line: #d9dce2; --fg: #16181d; --fg2: #5c616b;
+    --accent: #0a6cd6; --accent-fg: #ffffff; --ok: #12905a; --warn: #a96b00; --err: #c62f2f; --shadow: rgba(0,0,0,.18);
+  }
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body { background: var(--bg); color: var(--fg); font: 14px/1.4 "Segoe UI", system-ui, sans-serif; display: flex; flex-direction: column; overflow: hidden; }
+button, input, select { font: inherit; color: inherit; }
+header { display: flex; align-items: center; gap: 12px; padding: 14px 20px 0; }
+header h1 { font-size: 18px; margin: 0; font-weight: 600; }
+header .sum { color: var(--fg2); flex: 1; }
+nav { display: flex; gap: 4px; padding: 10px 20px 0; border-bottom: 1px solid var(--line); }
+nav button { background: none; border: 0; border-bottom: 2px solid transparent; padding: 8px 14px; cursor: pointer; color: var(--fg2); }
+nav button:hover { color: var(--fg); }
+nav button.on { color: var(--fg); border-bottom-color: var(--accent); font-weight: 600; }
+nav .badge { background: var(--accent); color: var(--accent-fg); border-radius: 9px; padding: 0 6px; font-size: 11px; margin-left: 6px; }
+nav .badge.err { background: var(--err); color: #fff; }
+main { flex: 1; overflow-y: auto; padding: 16px 20px 28px; }
+.btn { border: 1px solid var(--line); background: var(--panel2); border-radius: 6px; padding: 5px 12px; cursor: pointer; white-space: nowrap; }
+.btn:hover { border-color: var(--accent); }
+.btn.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+.btn.danger { color: var(--err); }
+.btn.sm { padding: 3px 9px; font-size: 13px; }
+.btn:disabled { opacity: .5; cursor: default; }
+.bar-actions { display: flex; gap: 8px; margin: 0 0 14px; flex-wrap: wrap; align-items: center; }
+.bar-actions .grow, .grow { flex: 1; min-width: 0; }
+h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--fg2); margin: 20px 0 8px; font-weight: 600; }
+h2:first-child { margin-top: 0; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; margin-bottom: 8px; }
+.row { display: flex; align-items: center; gap: 12px; }
+.row + .row { margin-top: 10px; }
+.title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.d { color: var(--fg2); font-size: 13px; }
+.d.err { color: var(--err); } .d.ok { color: var(--ok); } .d.warn { color: var(--warn); }
+.acts { display: flex; gap: 6px; flex-shrink: 0; }
+.bar { height: 6px; border-radius: 3px; background: var(--panel2); overflow: hidden; margin-top: 8px; }
+.bar > i { display: block; height: 100%; background: var(--accent); width: 0; transition: width .25s; }
+.bar.ind > i { width: 35% !important; animation: slide 1.2s infinite ease-in-out; }
+@keyframes slide { 0% { margin-left: -35%; } 100% { margin-left: 100%; } }
+.tag { display: inline-block; border: 1px solid var(--line); border-radius: 4px; padding: 0 6px; font-size: 12px; margin-left: 6px; color: var(--fg2); }
+.tag.warn { color: var(--warn); border-color: var(--warn); }
+.empty { text-align: center; color: var(--fg2); padding: 48px 20px; }
+.banner { background: var(--panel2); border-left: 3px solid var(--warn); border-radius: 6px; padding: 9px 12px; margin-bottom: 14px; }
+.set { display: flex; align-items: center; gap: 16px; padding: 12px 0; border-top: 1px solid var(--line); }
+.set:first-of-type { border-top: 0; }
+.set .lbl { flex: 1; min-width: 0; }
+.set .lbl .t { font-weight: 500; }
+.set .ctl { display: flex; align-items: center; gap: 8px; flex-shrink: 0; flex-wrap: wrap; justify-content: flex-end; max-width: 52%; }
+select, input[type=text], input[type=time] { background: var(--panel2); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; }
+input[type=text] { width: 280px; }
+select:focus, input:focus { outline: 1px solid var(--accent); }
+.sw { position: relative; width: 38px; height: 22px; flex-shrink: 0; }
+.sw input { opacity: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; position: absolute; inset: 0; z-index: 1; }
+.sw span { position: absolute; inset: 0; background: var(--line); border-radius: 11px; transition: background .15s; }
+.sw span::after { content: ""; position: absolute; width: 16px; height: 16px; left: 3px; top: 3px; border-radius: 50%; background: #fff; transition: transform .15s; }
+.sw input:checked + span { background: var(--accent); }
+.sw input:checked + span::after { transform: translateX(16px); }
+pre { background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; overflow: auto; max-height: 300px; font: 12px/1.45 Consolas, monospace; white-space: pre-wrap; word-break: break-all; margin: 8px 0 0; }
+#toast { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 9px 16px; box-shadow: 0 6px 24px var(--shadow); opacity: 0; pointer-events: none; transition: opacity .2s; max-width: 80%; }
+#toast.on { opacity: 1; } #toast.err { border-color: var(--err); }
+.mono { font-family: Consolas, monospace; font-size: 12px; }
+</style>
+</head>
+<body>
+<header><h1>PC Tube Descargas</h1><div class="sum" id="sum"></div><div id="topacts"></div></header>
+<nav id="nav"></nav>
+<main id="main"></main>
+<div id="toast"></div>
+<script>
+(function () {
+  'use strict';
+
+  // ---------- bridge to Rust ----------
+  var waiting = {}, nextId = 1;
+  function call(cmd, args) {
+    return new Promise(function (resolve, reject) {
+      var id = nextId++;
+      waiting[id] = { resolve: resolve, reject: reject };
+      var msg = Object.assign({}, args || {}, { id: id, cmd: cmd });
+      window.ipc.postMessage(JSON.stringify(msg));
+    });
+  }
+  window.dm = {
+    _reply: function (r) {
+      var p = waiting[r.id];
+      if (!p) return;
+      delete waiting[r.id];
+      if (r.ok) p.resolve(r.data); else p.reject(new Error(r.error || 'error'));
+    },
+    _event: function (ev) { onEvent(ev); }
+  };
+
+  // ---------- state ----------
+  var S = {
+    tab: 'downloads', jobs: [], queue: { items: [], pausedAll: false, schedule: {} }, history: [], histFilter: 'all',
+    settings: null, dir: '', defaultDir: '', ytdlp: null, ffmpeg: null, version: '', tools: {}, ytVersion: undefined, diag: null
+  };
+
+  // ---------- small helpers ----------
+  function h(tag, attrs, kids) {
+    var e = document.createElement(tag);
+    if (attrs) for (var k in attrs) {
+      if (k === 'class') e.className = attrs[k];
+      else if (k.slice(0, 2) === 'on') e.addEventListener(k.slice(2), attrs[k]);
+      else if (attrs[k] !== false && attrs[k] != null) e.setAttribute(k, attrs[k] === true ? '' : attrs[k]);
+    }
+    (Array.isArray(kids) ? kids : kids == null ? [] : [kids]).forEach(function (c) {
+      if (c == null || c === false) return;
+      e.appendChild(typeof c === 'string' || typeof c === 'number' ? document.createTextNode(String(c)) : c);
+    });
+    return e;
+  }
+  function clear(el) { while (el.firstChild) el.removeChild(el.firstChild); }
+  function btn(text, onclick, cls) { return h('button', { class: 'btn sm' + (cls ? ' ' + cls : ''), type: 'button', onclick: onclick }, text); }
+  function fmtBytes(n) {
+    if (!n && n !== 0) return '';
+    var u = ['B', 'KB', 'MB', 'GB'], i = 0;
+    while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+    return (i ? n.toFixed(n >= 100 ? 0 : 1) : n) + ' ' + u[i];
+  }
+  function fmtEta(s) {
+    if (s == null || !isFinite(s)) return '';
+    s = Math.round(s);
+    var hh = Math.floor(s / 3600), mm = Math.floor(s % 3600 / 60), ss = s % 60;
+    return (hh ? hh + ':' + String(mm).padStart(2, '0') : mm) + ':' + String(ss).padStart(2, '0');
+  }
+  function fmtDate(ms) {
+    var d = new Date(ms);
+    return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  }
+  function describe(o) {
+    o = o || {};
+    var what = o.mode === 'audio' ? 'Audio ' + String(o.audio_format || '').toUpperCase()
+      : (o.max_height ? o.max_height + 'p ' : 'Mejor calidad ') + String(o.container || '').toUpperCase();
+    return (o.playlist_id ? 'Lista completa · ' : '') + what;
+  }
+  var toastTimer;
+  function toast(msg, err) {
+    var t = document.getElementById('toast');
+    t.textContent = msg;
+    t.className = 'on' + (err ? ' err' : '');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { t.className = ''; }, err ? 6000 : 2500);
+  }
+  function run(cmd, args, okMsg) {
+    return call(cmd, args).then(function (r) { if (okMsg) toast(okMsg); return r; })
+      .catch(function (e) { toast(e.message, true); throw e; });
+  }
+  function bar(pct, ind) { var i = h('i'); i.style.width = (pct || 0) + '%'; return h('div', { class: 'bar' + (ind ? ' ind' : '') }, i); }
+
+  // ---------- header / tabs ----------
+  var TABS = [['downloads', 'Descargas'], ['history', 'Completadas'], ['settings', 'Ajustes'], ['tools', 'Herramientas']];
+  function renderNav() {
+    var nav = document.getElementById('nav');
+    clear(nav);
+    var count = S.jobs.length + S.queue.items.length;
+    var failed = S.history.filter(function (e) { return !e.ok; }).length;
+    TABS.forEach(function (t) {
+      var badge = t[0] === 'downloads' && count ? h('span', { class: 'badge' }, count)
+        : t[0] === 'history' && failed ? h('span', { class: 'badge err' }, failed) : null;
+      nav.appendChild(h('button', { class: S.tab === t[0] ? 'on' : '', type: 'button', onclick: function () { go(t[0]); } }, [t[1], badge]));
+    });
+  }
+  function renderSummary() {
+    var speed = 0;
+    S.jobs.forEach(function (j) { speed += j.speed || 0; });
+    var parts = [];
+    if (S.jobs.length) parts.push(S.jobs.length + ' en curso');
+    if (S.queue.items.length) parts.push(S.queue.items.length + ' en cola');
+    if (speed) parts.push(fmtBytes(speed) + '/s');
+    document.getElementById('sum').textContent = parts.join(' · ');
+    var acts = document.getElementById('topacts');
+    clear(acts);
+    if (S.jobs.length || S.queue.items.length) {
+      acts.appendChild(btn(S.queue.pausedAll ? 'Reanudar todo' : 'Pausar todo', function () {
+        run('pauseAll', { on: !S.queue.pausedAll });
+      }));
+    }
+  }
+  function go(tab) {
+    S.tab = tab;
+    render(true);
+    if (tab === 'history') loadHistory();
+    if (tab === 'tools') loadYtVersion();
+  }
+
+  // ---------- downloads tab ----------
+  function jobCard(j) {
+    var info = [];
+    var line = h('div', { class: 'd' });
+    var fill = h('i');
+    var barEl = h('div', { class: 'bar' }, fill);
+    var card = h('div', { class: 'card', 'data-qid': j.qid }, [
+      h('div', { class: 'row' }, [
+        h('div', { class: 'grow' }, [h('div', { class: 'title', title: j.title || '' }, j.title || 'Obteniendo información…'), line]),
+        h('div', { class: 'acts' }, [
+          btn('Pausar', function () { run('pause', { qid: j.qid }); }),
+          btn('Cancelar', function () { run('cancel', { qid: j.qid }); }, 'danger')
+        ])
+      ]),
+      barEl
+    ]);
+    j._el = { line: line, fill: fill, bar: barEl };
+    patchJob(j);
+    return card;
+  }
+  function patchJob(j) {
+    if (!j._el) return;
+    var bits = [(j.prefix || '') + (j.status || '')];
+    if (!j.indeterminate && j.pct) bits.push(j.pct + '%');
+    if (j.speed) bits.push(fmtBytes(j.speed) + '/s');
+    if (j.total && j.done != null) bits.push(fmtBytes(j.done) + ' de ' + fmtBytes(j.total));
+    if (j.eta != null && j.speed) bits.push('faltan ' + fmtEta(j.eta));
+    j._el.line.textContent = bits.join(' · ');
+    j._el.fill.style.width = (j.pct || 0) + '%';
+    j._el.bar.className = 'bar' + (j.indeterminate ? ' ind' : '');
+  }
+  function queueRow(it) {
+    var sch = S.queue.schedule || {};
+    var wait = it.paused ? h('span', { class: 'tag warn' }, 'En pausa')
+      : sch.on && !sch.open && !it.force ? h('span', { class: 'tag' }, 'Esperando el horario (' + sch.from + ')') : null;
+    return h('div', { class: 'card' }, h('div', { class: 'row' }, [
+      h('div', { class: 'grow' }, [h('div', { class: 'title', title: it.label || it.videoId }, [it.label || it.videoId, wait]), h('div', { class: 'd' }, describe(it.opts))]),
+      h('div', { class: 'acts' }, [
+        it.paused ? btn('Reanudar', function () { run('resumeItem', { qid: it.qid }); }) : btn('Pausar', function () { run('pause', { qid: it.qid }); }),
+        btn('Iniciar ahora', function () { run('startNow', { qid: it.qid }); }),
+        btn('Quitar', function () { run('cancelQueued', { qid: it.qid }); }, 'danger')
+      ])
+    ]));
+  }
+  function renderDownloads(root) {
+    var q = S.queue, sch = q.schedule || {};
+    var anyPaused = q.items.some(function (i) { return i.paused; });
+    if (sch.on && !sch.open) {
+      root.appendChild(h('div', { class: 'banner' }, 'Fuera del horario de descargas (' + sch.from + ' a ' + sch.to + '): lo que añadas espera a que llegue la hora, o pulsa «Iniciar ahora».'));
+    }
+    if (q.pausedAll) root.appendChild(h('div', { class: 'banner' }, 'Todo está en pausa. Pulsa «Reanudar todo» para continuar.'));
+    else if (anyPaused && !S.jobs.length) {
+      root.appendChild(h('div', { class: 'banner' }, [
+        'Hay descargas que quedaron pendientes. ', btn('Reanudar todas', function () { run('resume'); }, 'primary')
+      ]));
+    }
+    if (!S.jobs.length && !q.items.length) {
+      root.appendChild(h('div', { class: 'empty' }, [
+        h('div', { class: 'title' }, 'No hay descargas'),
+        h('div', { class: 'd' }, 'En PC Tube usa el botón de descarga del reproductor o Alt + D. Lo descargado aparece en «Completadas».')
+      ]));
+      return;
+    }
+    if (S.jobs.length) {
+      root.appendChild(h('h2', null, 'En curso'));
+      S.jobs.forEach(function (j) { root.appendChild(jobCard(j)); });
+    }
+    if (q.items.length) {
+      root.appendChild(h('h2', null, 'En cola'));
+      q.items.forEach(function (it) { root.appendChild(queueRow(it)); });
+      root.appendChild(h('div', { class: 'bar-actions' }, btn('Vaciar cola', function () { run('clearQueue'); }, 'danger')));
+    }
+  }
+
+  // ---------- history tab ----------
+  function loadHistory() { call('history').then(function (l) { S.history = l; renderNav(); if (S.tab === 'history') render(false); }).catch(function () {}); }
+  function histRow(e) {
+    var meta = e.ok
+      ? [fmtBytes(e.size), fmtDate(e.ts), e.exists ? '' : 'el archivo ya no está'].filter(Boolean).join(' · ')
+      : fmtDate(e.ts);
+    var del = btn('Eliminar archivo', function () {
+      if (del.dataset.armed) { run('fileAction', { action: 'delete', entry: e.id }); return; }
+      del.dataset.armed = '1'; del.textContent = '¿Seguro?'; del.classList.add('danger');
+      setTimeout(function () { if (del.isConnected) { delete del.dataset.armed; del.textContent = 'Eliminar archivo'; del.classList.remove('danger'); } }, 3000);
+    });
+    var acts = e.ok
+      ? [e.exists ? btn('Abrir', function () { run('fileAction', { action: 'open', entry: e.id }); }) : null,
+         e.exists ? btn('Mostrar', function () { run('fileAction', { action: 'show', entry: e.id }); }) : null,
+         e.exists ? del : null,
+         btn('Quitar de la lista', function () { run('historyRemove', { entry: e.id }); })]
+      : [btn('Reintentar', function () { run('retry', { entry: e.id }); }), btn('Descartar', function () { run('historyRemove', { entry: e.id }); })];
+    return h('div', { class: 'card' }, h('div', { class: 'row' }, [
+      h('div', { class: 'grow' }, [
+        h('div', { class: 'title', title: e.ok ? e.file : e.title }, e.title || e.file),
+        h('div', { class: 'd' + (e.ok ? '' : ' err') }, e.ok ? meta : e.msg + ' · ' + meta)
+      ]),
+      h('div', { class: 'acts' }, acts)
+    ]));
+  }
+  function renderHistory(root) {
+    var failed = S.history.filter(function (e) { return !e.ok; }).length;
+    root.appendChild(h('div', { class: 'bar-actions' }, [
+      btn('Todas', function () { S.histFilter = 'all'; render(false); }, S.histFilter === 'all' ? 'primary' : ''),
+      btn('Fallidas' + (failed ? ' (' + failed + ')' : ''), function () { S.histFilter = 'failed'; render(false); }, S.histFilter === 'failed' ? 'primary' : ''),
+      h('div', { class: 'grow' }),
+      btn('Abrir la carpeta', function () { run('openFolder'); }),
+      btn('Vaciar la lista', function () { run('historyClear', { failedOnly: S.histFilter === 'failed' }); }, 'danger')
+    ]));
+    var list = S.history.filter(function (e) { return S.histFilter === 'all' || !e.ok; });
+    if (!list.length) {
+      root.appendChild(h('div', { class: 'empty' }, S.histFilter === 'all' ? 'Aún no has descargado nada.' : 'No hay descargas fallidas.'));
+      return;
+    }
+    list.forEach(function (e) { root.appendChild(histRow(e)); });
+  }
+
+  // ---------- settings tab ----------
+  function save(patch) {
+    return call('setSettings', patch).then(function (s) { S.settings = s; toast('Guardado'); })
+      .catch(function (e) { toast(e.message, true); }).then(function () { if (S.tab === 'settings') render(false); });
+  }
+  function setting(title, desc, controls) {
+    return h('div', { class: 'set' }, [h('div', { class: 'lbl' }, [h('div', { class: 't' }, title), desc ? h('div', { class: 'd' }, desc) : null]), h('div', { class: 'ctl' }, controls)]);
+  }
+  function select(options, value, onchange) {
+    var s = h('select', null, options.map(function (o) { return h('option', { value: String(o[0]), selected: String(o[0]) === String(value) }, o[1]); }));
+    s.addEventListener('change', function () { onchange(s.value); });
+    return s;
+  }
+  function toggle(value, onchange) {
+    var i = h('input', { type: 'checkbox', checked: !!value });
+    i.addEventListener('change', function () { onchange(i.checked); });
+    return h('label', { class: 'sw' }, [i, h('span')]);
+  }
+  function textInput(value, onchange, extra) {
+    var i = h('input', Object.assign({ type: 'text', value: value }, extra || {}));
+    i.addEventListener('change', function () { onchange(i.value.trim()); });
+    return i;
+  }
+  var SAMPLE = { title: 'Título del vídeo', id: 'dQw4w9WgXcQ', channel: 'Canal', date: '20240131', playlist: 'Mi lista', index: '003' };
+  function preview(t) { return t.replace(/\{(\w+)\}/g, function (m, k) { return SAMPLE[k] != null ? SAMPLE[k] : m; }) + '.mp4'; }
+  var NAME_PRESETS = [
+    ['{title} [{id}]', 'Título [id]  (predeterminado)'], ['{channel} - {title} [{id}]', 'Canal - Título'],
+    ['{channel}/{title} [{id}]', 'Una carpeta por canal'], ['{date} - {title} [{id}]', 'Fecha - Título']
+  ];
+  var LIST_PRESETS = [
+    ['{playlist}/{index} - {title} [{id}]', 'Carpeta de la lista / n.º - Título  (predeterminado)'],
+    ['{channel}/{playlist}/{index} - {title} [{id}]', 'Canal / Lista / n.º - Título'], ['{playlist}/{title} [{id}]', 'Carpeta de la lista / Título (sin número)']
+  ];
+  function nameSetting(title, desc, key, presets) {
+    var cur = S.settings[key];
+    var isPreset = presets.some(function (p) { return p[0] === cur; });
+    var opts = presets.concat([['__custom', 'Personalizado…']]);
+    var input = textInput(cur, function (v) { save((function () { var o = {}; o[key] = v; return o; })()); });
+    input.style.display = isPreset ? 'none' : '';
+    var pv = h('div', { class: 'd mono' }, 'Ejemplo: ' + preview(cur));
+    var sel = select(opts, isPreset ? cur : '__custom', function (v) {
+      if (v === '__custom') { input.style.display = ''; input.focus(); return; }
+      var o = {}; o[key] = v; save(o);
+    });
+    return setting(title, desc, [sel, input, pv]);
+  }
+  var SPEEDS = [[0, 'Sin límite'], [512, '512 KB/s'], [1024, '1 MB/s'], [2048, '2 MB/s'], [5120, '5 MB/s'], [10240, '10 MB/s'], [20480, '20 MB/s']];
+  function renderSettings(root) {
+    var s = S.settings;
+    if (!s) { root.appendChild(h('div', { class: 'd' }, 'Cargando…')); return; }
+    var speeds = SPEEDS.some(function (x) { return x[0] === s.speedKbps; }) ? SPEEDS : SPEEDS.concat([[s.speedKbps, s.speedKbps + ' KB/s']]);
+    root.appendChild(h('h2', null, 'Velocidad'));
+    root.appendChild(h('div', { class: 'card' }, [
+      setting('Descargas simultáneas', 'Las demás esperan en la cola. Más a la vez gastan más red y procesador (convertir con ffmpeg es lo que más pesa).',
+        select([[1, '1 (una tras otra)'], [2, '2'], [3, '3'], [4, '4']], s.parallel, function (v) { save({ parallel: Number(v) }); })),
+      setting('Límite de velocidad', 'Es el máximo en total y se reparte a partes iguales entre las descargas simultáneas (con 2 a la vez, cada una va como mucho a la mitad). Se aplica a las que empiezan a partir de ahora.',
+        select(speeds, s.speedKbps, function (v) { save({ speedKbps: Number(v) }); })),
+      setting('Horario', 'Las descargas nuevas solo empiezan dentro de este horario; lo que ya está en marcha termina. «Iniciar ahora» lo salta.', [
+        toggle(s.schedule, function (v) { save({ schedule: v }); }),
+        h('span', { class: 'd' }, 'de'), timeInput(s.from, 'from'), h('span', { class: 'd' }, 'a'), timeInput(s.to, 'to')
+      ])
+    ]));
+    root.appendChild(h('h2', null, 'Archivos'));
+    root.appendChild(h('div', { class: 'card' }, [
+      setting('Carpeta de descargas', S.dir, [
+        btn('Cambiar…', function () { call('pickFolder').then(function (r) { if (r) toast('Carpeta cambiada'); }).catch(function (e) { toast(e.message, true); }); }),
+        btn('Abrir', function () { run('openFolder'); }),
+        S.settings.dir ? btn('Restablecer', function () { save({ dir: '' }); }) : null
+      ]),
+      nameSetting('Nombre de los archivos', 'Campos: {title} {id} {channel} {date}. Una «/» crea carpetas.', 'nameTemplate', NAME_PRESETS),
+      nameSetting('Nombre dentro de las listas', 'Además: {playlist} y {index} (el número en la lista).', 'playlistTemplate', LIST_PRESETS)
+    ]));
+    root.appendChild(h('h2', null, 'Extras al descargar'));
+    root.appendChild(h('div', { class: 'card' }, [
+      setting('Subtítulos', 'Solo en vídeo. Incrustarlos y convertirlos a SRT requiere ffmpeg.',
+        select([['off', 'No descargar'], ['file', 'Guardar como archivo .srt'], ['embed', 'Incrustar en el vídeo']], s.subs, function (v) { save({ subs: v }); })),
+      setting('Idiomas de los subtítulos', 'Códigos separados por comas: es, en, pt-BR…',
+        textInput(s.subsLangs, function (v) { save({ subsLangs: v }); }, { style: 'width:160px' })),
+      setting('Incluir los automáticos', 'Si no hay subtítulos hechos por personas, usar los que genera YouTube.', toggle(s.subsAuto, function (v) { save({ subsAuto: v }); })),
+      setting('Guardar la miniatura', 'Como imagen .jpg junto al archivo.', toggle(s.thumbnail, function (v) { save({ thumbnail: v }); }))
+    ]));
+    root.appendChild(h('h2', null, 'El gestor'));
+    root.appendChild(h('div', { class: 'card' }, [
+      setting('Cerrarse al terminar', 'Si la ventana está oculta y no queda nada que hacer, el gestor se cierra solo (PC Tube lo vuelve a abrir cuando lo necesite).',
+        toggle(s.autoExit, function (v) { save({ autoExit: v }); })),
+      setting('Mantener yt-dlp al día', 'Busca una versión nueva una vez por semana (YouTube rompe las viejas a menudo).',
+        toggle(s.autoUpdate, function (v) { save({ autoUpdate: v }); }))
+    ]));
+  }
+  function timeInput(value, key) {
+    var i = h('input', { type: 'time', value: value });
+    i.addEventListener('change', function () { if (i.value) { var o = {}; o[key] = i.value; save(o); } });
+    return i;
+  }
+
+  // ---------- tools tab ----------
+  function loadYtVersion() {
+    if (!S.ytdlp || !S.ytdlp.installed || S.ytVersion !== undefined) return;
+    S.ytVersion = null;
+    call('ytdlpVersion').then(function (v) { S.ytVersion = v; if (S.tab === 'tools') render(false); }).catch(function () {});
+  }
+  function toolCard(key, name, installed, text, actions) {
+    var st = S.tools[key], working = st && st.state === 'working';
+    var side = working
+      ? h('div', { style: 'width:220px' }, [bar(st.pct, st.pct == null), h('div', { class: 'd' }, st.msg + (st.pct != null ? ' ' + st.pct + '%' : ''))])
+      : h('div', { class: 'acts' }, actions);
+    var extra = st && st.state === 'error' ? h('div', { class: 'd err' }, 'Error: ' + st.msg) : st && st.state === 'done' ? h('div', { class: 'd ok' }, st.msg) : null;
+    return h('div', { class: 'card' }, h('div', { class: 'row' }, [
+      h('div', { class: 'grow' }, [h('div', { class: 'title' }, name), h('div', { class: 'd' }, text), extra]), side
+    ]));
+  }
+  function reportText() {
+    var d = S.diag || {};
+    var lines = ['PC Tube Descargas ' + (d.version || S.version), 'Sistema: ' + (d.os || ''),
+      'yt-dlp: ' + (d.ytdlp ? d.ytdlp.version + ' (' + d.ytdlp.path + ')' : 'no instalado'),
+      'ffmpeg: ' + (d.ffmpeg ? (d.ffmpeg.version || '') + ' (' + d.ffmpeg.path + ')' : 'no instalado'),
+      'Carpeta de descargas: ' + d.downloadDir, 'Datos: ' + d.dataDir, 'Ajustes: ' + JSON.stringify(S.settings), '', 'Registro:'];
+    return lines.concat(d.log || []).join('\n');
+  }
+  function copy(text) {
+    var ta = h('textarea', { style: 'position:fixed;opacity:0' }); ta.value = text; document.body.appendChild(ta); ta.select();
+    var ok = false; try { ok = document.execCommand('copy'); } catch (e) {}
+    ta.remove(); toast(ok ? 'Informe copiado' : 'No se pudo copiar', !ok);
+  }
+  function renderTools(root) {
+    var y = S.ytdlp || {}, f = S.ffmpeg || {};
+    root.appendChild(h('h2', null, 'Herramientas'));
+    root.appendChild(toolCard('ytdlp', 'yt-dlp', y.installed,
+      y.installed ? 'Instalado' + (S.ytVersion ? ' · versión ' + S.ytVersion : S.ytVersion === null ? ' · comprobando versión…' : '') + (y.source === 'system' ? ' · del sistema' : ' · en la carpeta de datos')
+        : 'No instalado. Se instala solo con la primera descarga, o ahora con el botón.',
+      y.installed ? [btn('Buscar actualización', function () { run('updateYtdlp'); })] : [btn('Instalar', function () { run('installYtdlp'); }, 'primary')]));
+    root.appendChild(toolCard('ffmpeg', 'ffmpeg', f.installed,
+      f.installed ? 'Instalado' + (f.source === 'system' ? ' · del sistema (PATH)' : ' · en la carpeta de datos') + ' · calidad máxima, MP3, subtítulos incrustados'
+        : 'No instalado. Hace falta para la mejor calidad (unir vídeo y audio), MP3 y los extras. Descarga de ≈ 90 MB.',
+      f.installed ? [] : [btn('Instalar ffmpeg', function () { run('installFfmpeg'); }, 'primary')]));
+    root.appendChild(h('div', { class: 'd' }, 'Se descargan de sus repositorios oficiales de GitHub y se verifican con SHA-256.'));
+    root.appendChild(h('h2', null, 'Diagnóstico'));
+    var box = h('div', { class: 'card' });
+    box.appendChild(h('div', { class: 'row' }, [
+      h('div', { class: 'grow' }, [h('div', { class: 'title' }, 'Informe'), h('div', { class: 'd' }, 'Versiones, carpetas, ajustes y las últimas líneas del registro. Cópialo si necesitas pedir ayuda.')]),
+      h('div', { class: 'acts' }, [
+        btn(S.diag ? 'Actualizar' : 'Generar informe', function () { S.diag = 'loading'; render(false); call('diagnostics').then(function (d) { S.diag = d; render(false); }).catch(function (e) { S.diag = null; toast(e.message, true); render(false); }); }, 'primary'),
+        S.diag && S.diag !== 'loading' ? btn('Copiar', function () { copy(reportText()); }) : null
+      ])
+    ]));
+    if (S.diag === 'loading') box.appendChild(h('div', { class: 'd' }, 'Preparando…'));
+    else if (S.diag) box.appendChild(h('pre', null, reportText()));
+    root.appendChild(box);
+    root.appendChild(h('div', { class: 'd' }, 'PC Tube Descargas ' + S.version + ' · datos en ' + (S.diag && S.diag !== 'loading' ? S.diag.dataDir : '%LOCALAPPDATA%\\PcTube')));
+  }
+
+  // ---------- rendering ----------
+  function render(force) {
+    renderNav();
+    renderSummary();
+    var main = document.getElementById('main');
+    // typing in a setting must not be interrupted by an event rebuilding the page
+    if (!force && S.tab === 'settings' && main.contains(document.activeElement) && /^(INPUT|SELECT)$/.test(document.activeElement.tagName)) return;
+    var top = main.scrollTop;
+    clear(main);
+    S.jobs.forEach(function (j) { j._el = null; });
+    if (S.tab === 'downloads') renderDownloads(main);
+    else if (S.tab === 'history') renderHistory(main);
+    else if (S.tab === 'settings') renderSettings(main);
+    else renderTools(main);
+    main.scrollTop = top;
+  }
+
+  // ---------- events from the engine ----------
+  function job(qid) { for (var i = 0; i < S.jobs.length; i++) if (S.jobs[i].qid === qid) return S.jobs[i]; return null; }
+  function drop(qid) { S.jobs = S.jobs.filter(function (j) { return j.qid !== qid; }); }
+  // The queue snapshot also lists what is running: that is how a window opened late learns about it.
+  function adoptQueue(q) {
+    S.queue = q;
+    var live = (q.activeItems || []);
+    S.jobs = S.jobs.filter(function (j) { return live.some(function (a) { return a.qid === j.qid; }); });
+    live.forEach(function (a) {
+      if (!job(a.qid)) S.jobs.push({ qid: a.qid, videoId: a.videoId, label: a.label, title: a.label, pct: 0, status: 'En curso', prefix: '' });
+    });
+  }
+  function onEvent(ev) {
+    var j = job(ev.qid), structural = false;
+    switch (ev.kind) {
+      case 'queue': adoptQueue(ev.queue); structural = true; break;
+      case 'start':
+        S.jobs.push({ qid: ev.qid, videoId: ev.videoId, label: ev.label, title: ev.label, pct: 0, status: 'Preparando…', prefix: '' });
+        structural = true; break;
+      case 'status': if (j) { j.status = ev.msg; patchJob(j); } break;
+      case 'title': if (j) { j.title = ev.title; structural = true; } break;
+      case 'item': if (j) { j.prefix = '(' + ev.index + '/' + ev.total + ') '; j.pct = 0; patchJob(j); } break;
+      case 'phase': if (j) { j.status = ev.label; j.pct = ev.pct == null ? 0 : ev.pct; j.indeterminate = ev.pct == null; j.speed = null; j.eta = null; patchJob(j); } break;
+      case 'progress':
+        if (j) { j.pct = ev.pct; j.indeterminate = false; j.speed = ev.speed; j.eta = ev.eta; j.done = ev.done; j.total = ev.total; patchJob(j); renderSummary(); }
+        break;
+      case 'done': case 'cancelled': case 'paused': case 'error':
+        drop(ev.qid); structural = true;
+        if (ev.kind === 'error') toast('No se pudo descargar: ' + ev.msg, true);
+        break;
+      case 'history': loadHistory(); break;
+      case 'settings': S.settings = ev.settings; if (S.tab === 'settings') render(false); break;
+      case 'tool':
+        S.tools[ev.tool] = { state: ev.state, msg: ev.msg, pct: ev.pct };
+        if (ev.state !== 'working') { S.ytVersion = undefined; loadState().then(function () { if (S.tab === 'tools') { loadYtVersion(); } }); }
+        else if (S.tab === 'tools') render(false);
+        break;
+    }
+    if (structural) render(false);
+  }
+
+  function loadState() {
+    return call('state').then(function (st) {
+      S.settings = st.settings; S.dir = st.dir; S.defaultDir = st.defaultDir; S.ytdlp = st.ytdlp; S.ffmpeg = st.ffmpeg;
+      S.version = st.version; adoptQueue(st.queue);
+      render(false);
+    });
+  }
+  loadState().catch(function (e) { toast(e.message, true); });
+  loadHistory();
+  render(true);
+})();
+</script>
+</body>
+</html>

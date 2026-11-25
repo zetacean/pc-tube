@@ -1,9 +1,8 @@
-#![recursion_limit = "256"] // config::defaults() is one big json! literal
+
 #![windows_subsystem = "windows"]
 
 mod autostart;
-mod config;
-mod download;
+mod dm;
 mod hotkeys;
 mod instance;
 mod ipc;
@@ -14,6 +13,7 @@ mod tray;
 mod update;
 mod winstate;
 
+use pc_tube::config;
 use std::sync::{Arc, Mutex};
 use tao::{
     event::{Event, WindowEvent},
@@ -208,7 +208,11 @@ fn main() {
     if cfg.lock().unwrap()["autostart"].as_bool().unwrap_or(false) {
         autostart::set(true);
     }
-    download::auto_update_in_background();
+    // The download manager is a separate program; join it if it is already running.
+    dm::init(proxy.clone());
+    {
+        std::thread::spawn(dm::connect_if_running);
+    }
 
     // Previous / play-pause / next on the taskbar thumbnail.
     taskbar::init(window.hwnd(), proxy.clone());
@@ -236,8 +240,6 @@ fn main() {
             None
         }
     };
-    download::set_limit(cfg.lock().unwrap()["downloadParallel"].as_u64().unwrap_or(2) as usize);
-    download::restore_queue(); // what was left unfinished last time (nothing starts by itself)
 
     let mut low_memory = false;
 
@@ -298,7 +300,6 @@ fn main() {
                 ipc::TrayAction::Show => show_window(&window),
                 ipc::TrayAction::Quit => {
                     if mini.is_none() { winstate::save(&window); }
-                    download::shutdown(); // stop yt-dlp, keep the queue for next time
                     *control_flow = ControlFlow::Exit;
                 }
             },
@@ -312,7 +313,6 @@ fn main() {
                         if hide_instead_of_quit {
                             window.set_visible(false);
                         } else {
-                            download::shutdown();
                             *control_flow = ControlFlow::Exit;
                         }
                     }
@@ -409,7 +409,6 @@ fn main() {
                 if hide_instead_of_quit {
                     window.set_visible(false);
                 } else {
-                    download::shutdown();
                     *control_flow = ControlFlow::Exit;
                 }
             }

@@ -23,6 +23,9 @@ Carga la interfaz normal de <https://www.youtube.com>.
   quedó pendiente al cerrar la app.
 - **Actualización dentro de la app** (copia instalada): descarga el instalador de GitHub, comprueba su
   suma SHA-256 y se actualiza sola.
+- **PC Tube Descargas** (gestor de descargas aparte): cola con pausa y reanudación, límite de velocidad,
+  horario, nombres y carpetas configurables, subtítulos y miniatura, historial, y herramientas con
+  diagnóstico. Sigue descargando aunque cierres PC Tube.
 - **Mini-reproductor** (botón en el reproductor o `Alt+M`): ventana pequeña siempre visible en la
   esquina. Al cerrarlo puedes volver a la ventana completa o pausar el vídeo (configurable).
 - **Descargas** de vídeos y listas de reproducción completas con yt-dlp (`Alt+D`): diálogo con las resoluciones reales del vídeo, formato

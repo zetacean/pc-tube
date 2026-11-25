@@ -3,6 +3,22 @@
 Formato: [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/). Las notas de cada versión
 se publican tal cual en su *release* de GitHub (el workflow toma la sección de la versión).
 
+## [0.6.0]
+
+### Añadido
+- **PC Tube Descargas**, un gestor de descargas aparte (como Free Download Manager): las descargas ya no las hace PC Tube sino un programa propio, con su ventana, su icono en la bandeja y su cola. Sigue descargando aunque cierres PC Tube, y se cierra solo cuando no queda nada que hacer y su ventana está oculta. PC Tube lo abre cuando hace falta (botón de descarga, `Alt+D`) o desde el botón de descargas de la barra.
+- En el gestor: **pausar y reanudar** cada descarga o todas (lo ya bajado no se pierde), **«Iniciar ahora»**, velocidad y tiempo restante, lista de **completadas** (abrir, mostrar, eliminar) y de **fallidas** (reintentar).
+- **Límite de velocidad** total y **horario** de descargas (por ejemplo, solo de noche).
+- **Nombre de los archivos y carpetas** configurables: por canal, por fecha, o una plantilla propia con `{title} {id} {channel} {date}` (y `{playlist} {index}` en las listas).
+- **Extras al descargar**: subtítulos (como archivo `.srt` o incrustados, con tus idiomas) y miniatura como imagen.
+- **Carpeta de descargas** a elegir.
+- **Herramientas y diagnóstico**: versiones de yt-dlp y ffmpeg, instalar y actualizar, e informe con el registro para copiar.
+
+### Cambiado
+- Las opciones de gestión de descargas (simultáneas, carpeta, herramientas, archivos descargados) pasaron del panel de PC Tube al gestor. PC Tube conserva lo que se elige al descargar (calidad, formato, carátula, quitar patrocinios).
+- El instalador y el zip incluyen `PC Tube Downloads.exe` junto a `PC Tube.exe`; la actualización dentro de la app cierra el gestor antes de instalar.
+- Lo que quedó pendiente al cerrar vuelve en pausa y se reanuda desde el gestor.
+
 ## [0.5.1]
 
 ### Añadido

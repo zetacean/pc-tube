@@ -189,7 +189,7 @@
           }
         }
         if (!info.hasFfmpeg) {
-          box.appendChild(h('p', { class: 'note warn' }, 'Sin ffmpeg solo hay calidades que ya traen el audio incluido (como máximo 360p). Instálalo en Ajustes → Descargas para ver todas las resoluciones, elegir formato y convertir a MP3.'));
+          box.appendChild(h('p', { class: 'note warn' }, 'Sin ffmpeg solo hay calidades que ya traen el audio incluido (como máximo 360p). Instálalo en el gestor de descargas (pestaña Herramientas) para ver todas las resoluciones, elegir formato y convertir a MP3.'));
         }
       } else {
         if (info.hasFfmpeg) {
@@ -198,7 +198,7 @@
             box.appendChild(field('Calidad', MP3_QUALITIES, st.audioQuality, function (v) { st.audioQuality = v; render(); }));
           }
         } else {
-          box.appendChild(h('p', { class: 'note warn' }, 'Sin ffmpeg el audio se guarda tal cual lo ofrece YouTube (M4A). Instala ffmpeg en Ajustes → Descargas para MP3, Opus, FLAC o WAV.'));
+          box.appendChild(h('p', { class: 'note warn' }, 'Sin ffmpeg el audio se guarda tal cual lo ofrece YouTube (M4A). Instala ffmpeg en el gestor de descargas (pestaña Herramientas) para MP3, Opus, FLAC o WAV.'));
         }
       }
 

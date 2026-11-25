@@ -1,7 +1,10 @@
-use crate::{config, net};
+use crate::{config, dm, net};
 use serde::Deserialize;
 use serde_json::{json, Value};
-use std::sync::{Arc, Mutex};
+use std::{
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 #[derive(Deserialize)]
 struct Msg {
@@ -17,8 +20,6 @@ struct Msg {
     mode: Option<String>,
     #[serde(rename = "maxHeight")]
     max_height: Option<u32>,
-    action: Option<String>,
-    name: Option<String>,
     container: Option<String>,
     #[serde(rename = "audioFormat")]
     audio_format: Option<String>,
@@ -41,6 +42,8 @@ struct Msg {
 }
 
 pub type Config = Arc<Mutex<Value>>;
+/// Where background jobs report back to the main thread.
+pub type Emit = Arc<dyn Fn(Out) + Send + Sync>;
 
 /// Window operations requested by the page (the window is frameless, so the page
 /// draws its own title bar buttons).
@@ -119,9 +122,16 @@ fn parse_win_cmd(cmd: &str, value: &Option<Value>) -> Option<WinCmd> {
 }
 
 /// A cloneable, thread-safe handle on `emit` for background jobs.
-fn shared_emit<F: Fn(Out) + Send + 'static>(emit: &Arc<Mutex<F>>) -> crate::download::Emit {
+fn shared_emit<F: Fn(Out) + Send + 'static>(emit: &Arc<Mutex<F>>) -> Emit {
     let emit = emit.clone();
     Arc::new(move |o| (emit.lock().unwrap())(o))
+}
+
+/// Fire-and-forget command for the manager (when it is not running there is nothing to act on).
+fn manager_cmd(cmd: &'static str, args: Value) {
+    std::thread::spawn(move || {
+        let _ = dm::try_call(cmd, args);
+    });
 }
 
 /// Handles one message from the page. `emit` may be called from another thread.
@@ -145,17 +155,9 @@ pub fn handle(body: &str, cfg: &Config, emit: impl Fn(Out) + Send + 'static) {
         "getConfig" => respond(m.id, true, cfg.lock().unwrap().clone()),
         "setConfig" => {
             if let Some(key) = m.key {
-                let parallel = (key == "downloadParallel").then(|| m.value.as_ref().and_then(Value::as_u64)).flatten();
-                {
-                    let mut c = cfg.lock().unwrap();
-                    c[key] = m.value.unwrap_or(Value::Null);
-                    config::save(&c);
-                }
-                // More simultaneous downloads allowed: start waiting ones right away.
-                if let Some(n) = parallel {
-                    crate::download::set_limit(n as usize);
-                    crate::download::pump(&shared_emit(&emit));
-                }
+                let mut c = cfg.lock().unwrap();
+                c[key] = m.value.unwrap_or(Value::Null);
+                config::save(&c);
             }
             respond(m.id, true, Value::Null);
         }
@@ -166,35 +168,43 @@ pub fn handle(body: &str, cfg: &Config, emit: impl Fn(Out) + Send + 'static) {
                 Err(e) => respond(m.id, false, Value::String(e)),
             });
         }
-        "download" => crate::download::enqueue(
-            m.video_id.unwrap_or_default(),
-            crate::download::Opts {
-                mode: m.mode.unwrap_or_default(),
-                max_height: m.max_height.unwrap_or(0),
-                container: m.container.unwrap_or_default(),
-                audio_format: m.audio_format.unwrap_or_default(),
-                audio_quality: m.audio_quality.unwrap_or_default(),
-                duration: m.duration.unwrap_or(0.0),
-                embed_meta: m.embed_meta.unwrap_or(false),
-                remove_categories: m.remove_categories.unwrap_or_default(),
-                playlist_id: m.playlist_id.unwrap_or_default(),
-            },
-            m.label.unwrap_or_default(),
-            m.qid.unwrap_or(0),
-            shared_emit(&emit),
-        ),
-        "cancelQueued" => crate::download::remove_queued(m.qid.unwrap_or(0), &shared_emit(&emit)),
-        "clearQueue" => crate::download::clear_queue(&shared_emit(&emit)),
-        "resumeQueue" => crate::download::resume(shared_emit(&emit)),
-        "queueInfo" => respond(m.id, true, crate::download::queue_snapshot()),
+        "download" => {
+            let args = json!({
+                "videoId": m.video_id, "qid": m.qid, "label": m.label, "mode": m.mode, "maxHeight": m.max_height,
+                "container": m.container, "audioFormat": m.audio_format, "audioQuality": m.audio_quality,
+                "duration": m.duration, "embedMeta": m.embed_meta, "removeCategories": m.remove_categories,
+                "playlistId": m.playlist_id,
+            });
+            let shared = shared_emit(&emit);
+            // Starting the manager can take a few seconds: off the UI thread.
+            std::thread::spawn(move || {
+                if let Err(e) = dm::call("download", args, Duration::from_secs(30)) {
+                    shared(Out::Eval(format!(
+                        "window.pctube&&window.pctube._download&&window.pctube._download({})",
+                        json!({ "kind": "status", "msg": format!("No se pudo descargar: {e}") })
+                    )));
+                }
+            });
+        }
+        "cancelQueued" => manager_cmd("cancelQueued", json!({ "qid": m.qid })),
+        "clearQueue" => manager_cmd("clearQueue", json!({})),
+        "resumeQueue" => manager_cmd("resume", json!({})),
+        "queueInfo" => {
+            std::thread::spawn(move || {
+                let q = dm::try_call("queue", json!({}))
+                    .unwrap_or_else(|_| json!({ "items": [], "running": false, "pending": pc_tube::engine::pending_count() }));
+                respond(m.id, true, q);
+            });
+        }
         "hotkeyStatus" => respond(m.id, true, json!(crate::hotkeys::failed())),
         "downloadFormats" => {
             // Starts yt-dlp and waits for YouTube: slow, so off the UI thread.
-            let shared = shared_emit(&emit);
             let video_id = m.video_id.unwrap_or_default();
-            std::thread::spawn(move || match crate::download::formats(&video_id, &shared) {
-                Ok(v) => respond(m.id, true, v),
-                Err(e) => respond(m.id, false, Value::String(e)),
+            std::thread::spawn(move || {
+                match dm::call("formats", json!({ "videoId": video_id }), Duration::from_secs(90)) {
+                    Ok(v) => respond(m.id, true, v),
+                    Err(e) => respond(m.id, false, Value::String(e)),
+                }
             });
         }
         "nowPlaying" => (emit.lock().unwrap())(Out::NowPlaying {
@@ -267,29 +277,22 @@ pub fn handle(body: &str, cfg: &Config, emit: impl Fn(Out) + Send + 'static) {
             video_id: m.video_id.unwrap_or_default(),
         }),
         "showWindow" => (emit.lock().unwrap())(Out::Tray(TrayAction::Show)),
-        "cancelDownload" => crate::download::cancel(m.qid), // no id: all of them
-        "installYtdlp" => crate::download::install_ytdlp_task(shared_emit(&emit)),
-        "updateYtdlp" => crate::download::update_ytdlp_task(shared_emit(&emit)),
-        "installFfmpeg" => crate::download::install_ffmpeg_task(shared_emit(&emit)),
-        "downloadsInfo" => respond(m.id, true, crate::download::info()),
-        "ytdlpVersion" => {
-            // Starts yt-dlp (slow), so keep it off the UI thread.
+        "cancelDownload" => manager_cmd("cancel", json!({ "qid": m.qid })), // no id: all of them
+        // The download manager's window (its own program, see src/bin/pctube_dm).
+        "openManager" | "openDownloads" => {
+            let folder = m.kind == "openDownloads";
             std::thread::spawn(move || {
-                let v = crate::download::ytdlp_version();
-                respond(m.id, true, v.map_or(Value::Null, Value::String));
+                let r = if folder {
+                    dm::try_call("openFolder", json!({})).map(|_| ()).or_else(|_| {
+                        pc_tube::engine::open_folder();
+                        Ok::<(), String>(())
+                    })
+                } else {
+                    dm::open_window()
+                };
+                respond(m.id, r.is_ok(), r.err().map_or(Value::Null, Value::String));
             });
         }
-        "fileAction" => {
-            let res = crate::download::file_action(
-                m.action.as_deref().unwrap_or(""),
-                m.name.as_deref().unwrap_or(""),
-            );
-            match res {
-                Ok(()) => respond(m.id, true, Value::Null),
-                Err(e) => respond(m.id, false, Value::String(e)),
-            }
-        }
-        "openDownloads" => crate::download::open_folder(),
         "window" => {
             if let Some(cmd) = m.cmd.as_deref().and_then(|c| parse_win_cmd(c, &m.value)) {
                 (emit.lock().unwrap())(Out::Window(cmd));

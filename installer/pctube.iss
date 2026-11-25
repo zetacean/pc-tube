@@ -1,10 +1,13 @@
 ; Inno Setup script. Built by tools\package.ps1 and by the release workflow:
-;   iscc /DAppVersion=0.2.0 /DExePath=..\target\release\pc_tube.exe installer\pctube.iss
+;   iscc /DAppVersion=0.2.0 /DExePath=..\target\release\pc_tube.exe /DDmExePath=..\target\release\pctube_dm.exe installer\pctube.iss
 #ifndef AppVersion
   #define AppVersion "0.0.0"
 #endif
 #ifndef ExePath
   #define ExePath "..\target\release\pc_tube.exe"
+#endif
+#ifndef DmExePath
+  #define DmExePath "..\target\release\pctube_dm.exe"
 #endif
 
 [Setup]
@@ -27,8 +30,8 @@ Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
 SetupIconFile=..\assets\icon.ico
-; the app holds this mutex while running: setup asks to close it before updating
-AppMutex=Local\PcTube.SingleInstance
+; the apps hold these mutexes while running: setup asks to close them before updating
+AppMutex=Local\PcTube.SingleInstance,Local\PcTubeDownloads.SingleInstance
 CloseApplications=yes
 
 [Languages]
@@ -40,11 +43,13 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; Flags: unchecked
 
 [Files]
 Source: "{#ExePath}"; DestDir: "{app}"; DestName: "PC Tube.exe"; Flags: ignoreversion
+Source: "{#DmExePath}"; DestDir: "{app}"; DestName: "PC Tube Downloads.exe"; Flags: ignoreversion
 Source: "..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\README.md"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\PC Tube"; Filename: "{app}\PC Tube.exe"
+Name: "{group}\PC Tube Descargas"; Filename: "{app}\PC Tube Downloads.exe"
 Name: "{autodesktop}\PC Tube"; Filename: "{app}\PC Tube.exe"; Tasks: desktopicon
 
 [Run]

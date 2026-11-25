@@ -1705,10 +1705,11 @@ dependencies = [
 
 [[package]]
 name = "pc_tube"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "dirs 6.0.0",
  "embed-resource",
+ "getrandom 0.4.3",
  "global-hotkey",
  "rfd",
  "serde",

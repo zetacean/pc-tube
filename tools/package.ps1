@@ -14,6 +14,8 @@ $stage = Join-Path 'dist' $name
 Remove-Item $stage -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force $stage | Out-Null
 Copy-Item 'target\release\pc_tube.exe' (Join-Path $stage 'PC Tube.exe')
+# the download manager: PC Tube starts it from the folder it is in
+Copy-Item 'target\release\pctube_dm.exe' (Join-Path $stage 'PC Tube Downloads.exe')
 Copy-Item 'LICENSE', 'README.md' $stage
 
 $zip = Join-Path 'dist' "$name.zip"
@@ -34,7 +36,7 @@ if ($Installer) {
         $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
     }
     if (-not $iscc -or -not (Test-Path $iscc)) { throw 'Inno Setup 6 no esta instalado (https://jrsoftware.org/isinfo.php)' }
-    & $iscc "/DAppVersion=$version" '/DExePath=..\target\release\pc_tube.exe' 'installer\pctube.iss'
+    & $iscc "/DAppVersion=$version" '/DExePath=..\target\release\pc_tube.exe' '/DDmExePath=..\target\release\pctube_dm.exe' 'installer\pctube.iss'
     if ($LASTEXITCODE) { throw 'iscc failed' }
     "Listo: dist\PC-Tube-$version-setup.exe"
 }

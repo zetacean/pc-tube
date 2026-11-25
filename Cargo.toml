@@ -1,6 +1,6 @@
 [package]
 name = "pc_tube"
-version = "0.5.1"
+version = "0.6.0"
 edition = "2021"
 license = "GPL-3.0-only"
 
@@ -28,10 +28,12 @@ windows = { version = "0.62", features = [
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Security",
+    "Win32_System_SystemInformation",
     "Win32_System_Threading",
     "Win32_UI_WindowsAndMessaging",
 ] }
 global-hotkey = "0.10.0"
+getrandom = "0.4"
 
 [build-dependencies]
 embed-resource = "3"

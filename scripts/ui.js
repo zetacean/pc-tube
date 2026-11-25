@@ -137,112 +137,32 @@
     return h('button', { class: 'btn sm' + (extra ? ' ' + extra : ''), type: 'button', onclick: onclick }, text);
   }
 
+  // The "Descargas" section: what is running now, and the way into the download manager (its own
+  // program, where the queue, history, speed limit, folders and tools live).
   function downloadsView() {
     var DL = window.pctube.dl;
-    var info = null;
-    var toolsBox = h('div', { class: 'card' });
     var activeBox = h('div', { class: 'card' });
-    var queueBox = h('div', { class: 'card' });
-    var failedBox = h('div', {});
-    var filesBox = h('div', {});
     var root = h('div', {}, [
-      h('div', { class: 'sub' }, 'Herramientas'), toolsBox,
-      h('div', { class: 'sub' }, 'En curso'), activeBox,
-      h('div', { class: 'sub' }, 'En cola'), queueBox,
-      failedBox,
-      h('div', { class: 'sub' }, 'Archivos descargados'), filesBox
+      h('div', { class: 'card' }, h('div', { class: 'row nb' }, [
+        h('div', { class: 'lbl grow' }, [
+          h('div', { class: 't' }, 'Gestor de descargas'),
+          h('div', { class: 'd' }, 'Las descargas las hace «PC Tube Descargas», un programa aparte: sigue descargando aunque cierres PC Tube. Ahí están la cola, lo ya descargado, el límite de velocidad, el horario, la carpeta, los nombres de archivo, los subtítulos y las herramientas (yt-dlp y ffmpeg).')
+        ]),
+        btn('Abrir el gestor', function () { window.pctube.openManager(); }, 'primary')
+      ])),
+      h('div', { class: 'sub' }, 'En curso'), activeBox
     ]);
-
-    // One line describing what a queued download will produce.
-    function describe(o) {
-      o = o || {};
-      var what = o.mode === 'audio' ? 'Audio ' + String(o.audio_format || '').toUpperCase()
-        : (o.max_height ? o.max_height + 'p ' : 'Mejor calidad ') + String(o.container || '').toUpperCase();
-      return (o.playlist_id ? 'Lista completa · ' : '') + what;
-    }
-
-    function renderQueue() {
-      clear(queueBox);
-      var q = DL.queue || [];
-      if (!q.length) {
-        queueBox.appendChild(h('div', { class: 'd' }, 'La cola está vacía. Si descargas algo cuando ya hay tantas en curso como permite «Descargas simultáneas» (Opciones de descarga), se añade aquí y empieza sola cuando haya sitio.'));
-        return;
-      }
-      queueBox.appendChild(h('div', { class: 'row nb' }, [
-        h('div', { class: 'd' }, q.length + (q.length === 1 ? ' en espera' : ' en espera') +
-          (DL.running ? '' : ' · en pausa (quedaron de la última vez)')),
-        h('div', { class: 'acts' }, [
-          DL.running ? null : btn('Reanudar', function () { DL.resume(); }),
-          btn('Vaciar cola', function () { DL.clearAll(); }, 'danger')
-        ])
-      ]));
-      q.forEach(function (item) {
-        queueBox.appendChild(h('div', { class: 'file' }, [
-          h('div', { class: 'lbl grow' }, [
-            h('div', { class: 't clip' }, item.label || item.videoId),
-            h('div', { class: 'd' }, describe(item.opts))
-          ]),
-          btn('Quitar', function () { DL.cancelQueued(item.qid); })
-        ]));
-      });
-    }
-
-    function renderFailed() {
-      clear(failedBox);
-      if (!DL.failed.length) return;
-      failedBox.appendChild(h('div', { class: 'sub' }, 'No se pudieron descargar'));
-      var card = h('div', { class: 'card' });
-      DL.failed.forEach(function (f) {
-        card.appendChild(h('div', { class: 'file' }, [
-          h('div', { class: 'lbl grow' }, [
-            h('div', { class: 't clip' }, f.label || f.videoId),
-            h('div', { class: 'd err' }, f.msg)
-          ]),
-          btn('Reintentar', function () { DL.retry(f); }),
-          btn('Descartar', function () { DL.forget(f); })
-        ]));
-      });
-      failedBox.appendChild(card);
-    }
-
-    function toolRow(tool, name, statusText, installedActions) {
-      var st = DL.tools[tool];
-      var working = st && st.state === 'working';
-      var right;
-      if (working) {
-        right = h('div', { class: 'prog' }, [bar(st.pct), h('div', { class: 'd' }, st.msg + (st.pct != null ? ' ' + st.pct + '%' : ''))]);
-      } else {
-        right = h('div', { class: 'acts' }, installedActions);
-      }
-      var desc = [h('div', { class: 'd' }, statusText)];
-      if (st && st.state === 'error') desc.push(h('div', { class: 'd err' }, 'Error: ' + st.msg));
-      else if (st && st.state === 'done') desc.push(h('div', { class: 'd ok' }, st.msg));
-      return h('div', { class: 'row tool' }, [h('div', { class: 'lbl' }, [h('div', { class: 't' }, name), desc]), right]);
-    }
-
-    function renderTools() {
-      clear(toolsBox);
-      if (!info) { toolsBox.appendChild(h('div', { class: 'd' }, 'Comprobando…')); return; }
-      var y = info.ytdlp, f = info.ffmpeg;
-      toolsBox.appendChild(toolRow('ytdlp', 'yt-dlp',
-        y.installed
-          ? 'Instalado' + (y.version ? ' · versión ' + y.version : y.version === undefined ? ' · comprobando versión…' : '') + (y.source === 'system' ? ' · del sistema' : ' · en la carpeta de la app')
-          : 'No instalado. Se instala solo con la primera descarga, o ahora con el botón.',
-        y.installed
-          ? [btn('Buscar actualización', function () { window.pctube.send('updateYtdlp'); })]
-          : [btn('Instalar', function () { window.pctube.send('installYtdlp'); })]));
-      toolsBox.appendChild(toolRow('ffmpeg', 'ffmpeg',
-        f.installed
-          ? 'Instalado' + (f.source === 'system' ? ' · del sistema (PATH)' : ' · en la carpeta de la app') + ' · calidad máxima y MP3 disponibles'
-          : 'No instalado. Necesario para la mejor calidad (unir vídeo y audio) y para MP3. Descarga de ≈ 90 MB.',
-        f.installed ? [] : [btn('Instalar ffmpeg', function () { window.pctube.send('installFfmpeg'); })]));
-      toolsBox.appendChild(h('div', { class: 'd note' }, 'Se descargan de sus repositorios oficiales de GitHub, se verifican con SHA-256 y se guardan en %LOCALAPPDATA%\\PcTube\\bin.'));
-    }
 
     function renderActive() {
       clear(activeBox);
       var jobs = DL.jobs;
-      if (!jobs.length) { activeBox.appendChild(h('div', { class: 'd' }, 'No hay descargas en curso. Usa el botón del reproductor o Alt + D.')); return; }
+      if (!jobs.length) {
+        var waiting = (DL.queue || []).length;
+        activeBox.appendChild(h('div', { class: 'd' }, waiting
+          ? 'No hay descargas en marcha; ' + waiting + (waiting === 1 ? ' espera' : ' esperan') + ' en la cola del gestor.'
+          : 'No hay descargas en curso. Usa el botón del reproductor o Alt + D.'));
+        return;
+      }
       jobs.forEach(function (a, i) {
         if (i) activeBox.appendChild(h('div', { class: 'sep' }));
         activeBox.appendChild(h('div', { class: 'row nb' }, [
@@ -256,74 +176,8 @@
       });
     }
 
-    function renderFiles() {
-      clear(filesBox);
-      if (!info) { filesBox.appendChild(h('div', { class: 'd' }, 'Cargando…')); return; }
-      var complete = info.files.filter(function (f) { return !f.partial; }).length;
-      var partials = info.files.length - complete;
-      filesBox.appendChild(h('div', { class: 'row nb' }, [
-        h('div', { class: 'd' }, complete + (complete === 1 ? ' archivo' : ' archivos') +
-          (partials ? ' + ' + partials + ' incompleto' + (partials === 1 ? '' : 's') : '') + ' · ' + info.dir),
-        btn('Abrir carpeta', function () { window.pctube.send('openDownloads'); })
-      ]));
-      if (!info.files.length) { filesBox.appendChild(h('div', { class: 'd pad' }, 'Aún no has descargado nada.')); return; }
-      info.files.forEach(function (f) {
-        var del = btn('Eliminar', function () {
-          if (del.dataset.armed) {
-            window.pctube.call('fileAction', { action: 'delete', name: f.name }).then(load).catch(function (e) {
-              if (window.pctube.toast) window.pctube.toast('No se pudo eliminar: ' + e.message, 5000);
-            });
-            return;
-          }
-          del.dataset.armed = '1';
-          del.textContent = '¿Seguro?';
-          del.classList.add('danger');
-          setTimeout(function () { if (del.isConnected) { delete del.dataset.armed; del.textContent = 'Eliminar'; del.classList.remove('danger'); } }, 3000);
-        });
-        filesBox.appendChild(h('div', { class: 'file' }, [
-          h('div', { class: 'lbl grow' }, [
-            h('div', { class: 't clip', title: f.name }, f.name),
-            h('div', { class: 'd' + (f.partial ? ' warn' : '') },
-              (f.partial ? 'Incompleta (descarga interrumpida; se reanuda si vuelves a descargar) · ' : '') +
-              fmtSize(f.size) + ' · ' + fmtDate(f.modified))
-          ]),
-          f.partial ? null : btn('Abrir', function () { window.pctube.call('fileAction', { action: 'open', name: f.name }); }),
-          btn('Mostrar', function () { window.pctube.call('fileAction', { action: 'show', name: f.name }); }),
-          del
-        ]));
-      });
-    }
-
-    function load() {
-      window.pctube.call('downloadsInfo').then(function (i) {
-        info = i;
-        renderTools();
-        renderFiles();
-        // The version needs to start yt-dlp, which is slow: fill it in when it arrives.
-        if (i.ytdlp.installed) {
-          window.pctube.call('ytdlpVersion').then(function (v) {
-            if (info === i) { i.ytdlp.version = v; renderTools(); }
-          }).catch(function () {});
-        }
-      }).catch(function () {
-        clear(toolsBox);
-        toolsBox.appendChild(h('div', { class: 'd err' }, 'No se pudo leer el estado de las descargas.'));
-      });
-    }
-
-    renderTools(); renderActive(); renderQueue(); renderFailed(); renderFiles(); load();
-
-    return {
-      root: root,
-      onEvent: function (ev) {
-        switch (ev.kind) {
-          case 'start': case 'title': case 'status': case 'progress': case 'phase': renderActive(); renderQueue(); break;
-          case 'queue': case 'queued': renderQueue(); renderFailed(); break;
-          case 'done': case 'cancelled': case 'error': renderActive(); renderQueue(); renderFailed(); load(); break;
-          case 'tool': renderTools(); if (ev.state !== 'working') load(); break;
-        }
-      }
-    };
+    renderActive();
+    return { root: root, onEvent: function () { renderActive(); } };
   }
 
   window.pctube.dl.on(function (ev) { if (host && dlView) dlView.onEvent(ev); });
@@ -655,19 +509,13 @@
       id: 'dl', title: 'Opciones de descarga', build: function () {
         return [
           toggle('enableDownload', 'Botón de descarga', 'Añade un botón al reproductor (y el atajo Alt + D) para descargar el vídeo que estás viendo.'),
-          choice('downloadParallel', 'Descargas simultáneas', 'Cuántas descargas se hacen a la vez; las demás esperan en la cola. Más descargas a la vez usan más red y más procesador (la conversión con ffmpeg es lo que más pesa).', [
-            { value: 1, label: '1 (una tras otra)' },
-            { value: 2, label: '2' },
-            { value: 3, label: '3' },
-            { value: 4, label: '4' }
-          ], true),
           toggle('downloadAsk', 'Elegir formato y calidad antes de descargar', 'Muestra un diálogo con las resoluciones y formatos reales del vídeo. Si lo desactivas, se usan directamente las opciones de abajo.'),
           h('div', { class: 'sub' }, 'Valores por defecto (también se actualizan al elegir en el diálogo)'),
           choice('downloadMode', 'Qué descargar', null, [
             { value: 'video', label: 'Vídeo' },
             { value: 'audio', label: 'Solo audio' }
           ]),
-          choice('downloadMaxHeight', 'Calidad máxima de vídeo', 'Con ffmpeg se une el mejor vídeo y audio; sin él se descarga un solo archivo de calidad media. Instálalo en la sección Descargas.', [
+          choice('downloadMaxHeight', 'Calidad máxima de vídeo', 'Con ffmpeg se une el mejor vídeo y audio; sin él se descarga un solo archivo de calidad media. Instálalo en el gestor de descargas (pestaña Herramientas).', [
             { value: 0, label: 'La mejor disponible' },
             { value: 2160, label: '4K (2160p)' },
             { value: 1440, label: '1440p' },
@@ -696,7 +544,11 @@
           h('div', { class: 'sub' }, 'Al guardar el archivo (requieren ffmpeg)'),
           toggle('downloadEmbedMeta', 'Incluir título, canal y carátula', 'Escribe los datos del vídeo dentro del archivo para que los reproductores los muestren. La carátula solo en MP4, MKV, MP3 y M4A.'),
           toggle('downloadRemoveSponsors', 'Quitar patrocinios del archivo', 'Corta del archivo las categorías de SponsorBlock que tengas en «Saltar automáticamente» (Ajustes → SponsorBlock). La duración final será menor.'),
-          action('Carpeta de descargas', 'Descargas\\PC Tube', 'Abrir carpeta', function () {
+          h('div', { class: 'sub' }, 'En el gestor de descargas'),
+          action('Gestor de descargas', 'Descargas simultáneas, límite de velocidad, horario, carpeta, nombres de archivo, subtítulos y herramientas.', 'Abrir el gestor', function () {
+            window.pctube.openManager();
+          }),
+          action('Carpeta de descargas', 'La que tengas elegida en el gestor (por defecto Descargas\\PC Tube)', 'Abrir carpeta', function () {
             window.pctube.send('openDownloads');
           })
         ];
@@ -1012,7 +864,7 @@
       paintModeButton(mb);
     }
     if (!document.getElementById('pctube-dlhub')) {
-      buttons.insertBefore(mastheadButton('pctube-dlhub', 'Descargas', DL_ICON, function () { open('dlhub'); }), document.getElementById('pctube-gear'));
+      buttons.insertBefore(mastheadButton('pctube-dlhub', 'Gestor de descargas', DL_ICON, function () { window.pctube.openManager(); }), document.getElementById('pctube-gear'));
     }
   }, 1500);
 })();

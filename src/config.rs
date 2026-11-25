@@ -70,7 +70,6 @@ pub fn defaults() -> Value {
         "volumeBoost": 100,         // 100 = off, up to 300 (%)
 
         "enableDownload": true,
-        "downloadParallel": 2,        // downloads running at the same time (1-4)
         "downloadAsk": true,          // show the format/quality dialog before downloading
         "downloadMode": "video",      // "video" | "audio"
         "downloadMaxHeight": 1080,    // 0 = best available

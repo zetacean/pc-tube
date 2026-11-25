@@ -1,6 +1,7 @@
 // Video download button (player controls) + Alt+D, and the shared download state used by the
-// "Descargas" panel. The real work is done by yt-dlp in Rust (src/download.rs); this asks for
-// it, keeps the state and shows progress as toasts.
+// "Descargas" panel. The real work is done by PC Tube Descargas, the download manager (its own
+// program: src/bin/pctube_dm, engine in src/engine.rs); this asks it, keeps the state it reports
+// and shows progress as toasts.
 (function () {
   'use strict';
   if (window.top !== window || window.__pctubeDownload || !window.pctube) return;
@@ -11,10 +12,9 @@
 
   // State shared with the panel (scripts/ui.js).
   //   tools:  { ytdlp|ffmpeg: { state: 'working'|'done'|'error', msg, pct } }
-  //   queue:  [{ qid, videoId, label, opts }] waiting (the truth is kept by Rust, src/download.rs)
-  //   failed: [{ videoId, label, opts, msg }] downloads that ended in an error (retry from the panel)
-  //   jobs:   [{ qid, videoId, label, title, pct, status, ... }] running now (up to "downloadParallel")
-  var dl = window.pctube.dl = { jobs: [], queue: [], running: false, limit: 2, failed: [], tools: {}, listeners: [] };
+  //   queue:  [{ qid, videoId, label, opts }] waiting (the truth is kept by the manager)
+  //   jobs:   [{ qid, videoId, label, title, pct, status, ... }] running now (as many as the manager allows)
+  var dl = window.pctube.dl = { jobs: [], queue: [], running: false, limit: 2, tools: {}, listeners: [] };
   // The first running download (what older code and the single-line summaries show).
   Object.defineProperty(dl, 'active', { get: function () { return dl.jobs[0] || null; } });
   function jobOf(qid) {
@@ -72,8 +72,8 @@
     return document.title.replace(/^\(\d+\)\s*/, '').replace(/\s*-\s*YouTube$/, '');
   }
 
-  // Adds a download to the queue with explicit options (the dialog calls this). Several can be
-  // queued; they run one after another.
+  // Adds a download to the manager's queue with explicit options (the dialog calls this). Several can
+  // be queued; the manager runs as many at once as its settings allow.
   function begin(id, opts) {
     var waiting = dl.jobs.length >= (dl.limit || 1) || dl.queue.length > 0;
     var qid = Date.now() * 1000 + Math.floor(Math.random() * 1000);
@@ -102,21 +102,13 @@
   // One running download (by id) or, without id, all of them.
   dl.cancel = function (qid) { window.pctube.send('cancelDownload', qid ? { qid: qid } : {}); };
   dl.cancelQueued = function (qid) { window.pctube.send('cancelQueued', { qid: qid }); };
-  dl.clearAll = function () { window.pctube.send('clearQueue'); };
-  dl.resume = function () { window.pctube.send('resumeQueue'); };
-  dl.retry = function (f) {
-    dl.failed = dl.failed.filter(function (x) { return x !== f; });
-    // Rust describes the options with snake_case names; the download message uses camelCase.
-    var src = f.opts || {};
-    var o = { label: f.label, mode: src.mode, maxHeight: src.max_height, container: src.container,
-      audioFormat: src.audio_format, audioQuality: src.audio_quality, duration: src.duration,
-      embedMeta: src.embed_meta, removeCategories: src.remove_categories, playlistId: src.playlist_id };
-    emit({ kind: 'queued' });
-    begin(f.videoId, o);
-  };
-  dl.forget = function (f) { dl.failed = dl.failed.filter(function (x) { return x !== f; }); emit({ kind: 'queued' }); };
 
-  // Events from Rust (src/download.rs). Those of a download carry its qid; with several running
+  // Opens the download manager's window (queue, history, speed limit, folders, tools...).
+  window.pctube.openManager = function () {
+    return window.pctube.call('openManager').catch(function (e) { toast('No se pudo abrir el gestor de descargas: ' + e.message, 6000); });
+  };
+
+  // Events from the manager (src/engine.rs). Those of a download carry its qid; with several running
   // at once, each is followed on its own.
   window.pctube._download = function (ev) {
     var a = jobOf(ev.qid);
@@ -156,17 +148,16 @@
       case 'done':
         dl.jobs = dl.jobs.filter(function (j) { return j.qid !== ev.qid; });
         toast('Descarga completa' + (ev.file ? ': ' + ev.file.split(/[\\/]/).pop() : '') +
-          ' (Ajustes → Descargas)', 8000);
+          ' (en el gestor de descargas)', 8000);
         break;
       case 'cancelled':
         dl.jobs = dl.jobs.filter(function (j) { return j.qid !== ev.qid; });
         toast('Descarga cancelada', 4000);
         break;
+      case 'paused':
+        dl.jobs = dl.jobs.filter(function (j) { return j.qid !== ev.qid; });
+        break;
       case 'error':
-        if (a) {
-          dl.failed.unshift({ videoId: a.videoId, label: a.label || a.title, opts: a.opts, msg: ev.msg });
-          dl.failed = dl.failed.slice(0, 20);
-        }
         dl.jobs = dl.jobs.filter(function (j) { return j.qid !== ev.qid; });
         toast('No se pudo descargar: ' + ev.msg, 10000);
         break;
@@ -181,14 +172,15 @@
 
   window.pctube.keys.register('download', 'Descargar el vídeo (o la lista)', 'Alt+D', start);
 
-  // What was left in the queue when the app closed: show it (nothing starts by itself).
+  // What was left in the manager's queue when it closed: mention it (nothing starts by itself).
   setTimeout(function () {
     window.pctube.call('queueInfo').then(function (q) {
       dl.queue = q.items || [];
       dl.running = !!q.running;
-      if (dl.queue.length && !dl.running) {
-        toast('Hay ' + dl.queue.length + (dl.queue.length === 1 ? ' descarga pendiente' : ' descargas pendientes') +
-          ' de la última vez (Ajustes → Descargas)', 9000);
+      var n = q.pending || (q.items || []).filter(function (i) { return i.paused; }).length;
+      if (n && !dl.running) {
+        toast('Hay ' + n + (n === 1 ? ' descarga pendiente' : ' descargas pendientes') +
+          ' de la última vez (se reanudan desde el gestor de descargas)', 9000);
       }
       emit({ kind: 'queued' });
     }).catch(function () {});
